@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -61,6 +61,99 @@ const markdownComponents: Components = {
   ),
 };
 
+// ── ステップガイド（空状態）────────────────────────────────────────
+const STEPS = [
+  {
+    num: "1",
+    icon: Clipboard,
+    title: "スクショを貼り付ける",
+    desc: "「問題」枠をクリック → ⌘V で貼り付け。解答も貼ると解説の精度UP",
+    text: "text-amber-600",
+    bg: "bg-amber-50",
+    border: "border-amber-200",
+    badge: "bg-amber-100",
+  },
+  {
+    num: "2",
+    icon: Sparkles,
+    title: "AI が解説を生成",
+    desc: "用語解説・問題解説・ポイントまとめを 3つの AI が同時生成",
+    text: "text-blue-600",
+    bg: "bg-blue-50",
+    border: "border-blue-200",
+    badge: "bg-blue-100",
+  },
+  {
+    num: "3",
+    icon: MessageCircle,
+    title: "質問して深める",
+    desc: "右ペインで疑問を解消。解説への追記もワンクリック",
+    text: "text-violet-600",
+    bg: "bg-violet-50",
+    border: "border-violet-200",
+    badge: "bg-violet-100",
+  },
+] as const;
+
+function StepGuide() {
+  return (
+    <div className="flex flex-col items-center justify-center gap-8 py-14 px-6">
+      {/* ヘッダー */}
+      <div className="text-center space-y-1.5">
+        <div className="flex items-center justify-center gap-2">
+          <GraduationCap className="h-5 w-5 text-primary" />
+          <span className="text-base font-bold text-foreground">本気AIドリル</span>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          問題のスクリーンショットを貼り付けるだけで
+        </p>
+        <p className="text-sm font-semibold text-primary">
+          AI が解説・コースまとめ・レッスンまとめを自動生成します
+        </p>
+      </div>
+
+      {/* ステップカード */}
+      <div className="flex items-start gap-2 w-full">
+        {STEPS.map((s, i) => (
+          <div key={s.num} className="flex items-start gap-2 flex-1 min-w-0">
+            {/* カード */}
+            <div
+              className={`flex-1 min-w-0 rounded-xl border ${s.border} ${s.bg} p-3 space-y-2.5 transition-shadow hover:shadow-sm`}
+            >
+              {/* バッジ + アイコン */}
+              <div className="flex items-center justify-between">
+                <span
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded-full ${s.badge} text-xs font-bold ${s.text}`}
+                >
+                  {s.num}
+                </span>
+                <s.icon className={`h-3.5 w-3.5 ${s.text} opacity-50`} />
+              </div>
+              {/* テキスト */}
+              <div className="space-y-1">
+                <p className={`text-xs font-bold ${s.text}`}>{s.title}</p>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {s.desc}
+                </p>
+              </div>
+            </div>
+            {/* 矢印 */}
+            {i < STEPS.length - 1 && (
+              <ChevronRight className="h-4 w-4 text-muted-foreground/30 mt-4 shrink-0" />
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* サブヒント */}
+      <p className="text-xs text-muted-foreground/60 text-center">
+        左のナビゲーションで Q・レッスン・コースを切り替えてまとめを確認できます
+      </p>
+    </div>
+  );
+}
+
+// ── コンテンツ描画 ──────────────────────────────────────────────────
 function renderContent(studyLog: StudyLog, teacherView: TeacherView): React.ReactNode {
   if (!teacherView) return null;
 
@@ -154,8 +247,8 @@ export default function TeacherPane({
     <div className="flex flex-col h-full border-r">
       <div className="p-3 border-b flex items-center justify-between gap-2">
         <div className="flex items-center gap-2 min-w-0">
-          <GraduationCap className="h-4 w-4 text-primary shrink-0" />
-          <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider shrink-0">
+          <GraduationCap className="h-3.5 w-3.5 text-blue-500 shrink-0" />
+          <h2 className="text-xs font-bold text-blue-600 uppercase tracking-wider shrink-0">
             先生ペイン
           </h2>
           {viewLabel && (
@@ -180,22 +273,14 @@ export default function TeacherPane({
           ) : teacherView ? (
             renderContent(studyLog, teacherView)
           ) : (
-            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center text-muted-foreground">
-              <GraduationCap className="h-12 w-12 opacity-20" />
-              {hasScreenshots ? (
-                <p className="text-sm">解析中...</p>
-              ) : (
-                <>
-                  <p className="text-sm font-medium">問題のスクリーンショットを貼り付けると</p>
-                  <p className="text-sm text-primary font-medium">
-                    AIが解説・コースまとめ・レッスンまとめを<br />自動で生成します
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    左のナビゲーションでQ・レッスン・コースを<br />クリックして切り替えられます
-                  </p>
-                </>
-              )}
-            </div>
+            hasScreenshots ? (
+              <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
+                <GraduationCap className="h-10 w-10 opacity-20" />
+                <p className="text-sm">解析準備中...</p>
+              </div>
+            ) : (
+              <StepGuide />
+            )
           )}
         </div>
       </ScrollArea>

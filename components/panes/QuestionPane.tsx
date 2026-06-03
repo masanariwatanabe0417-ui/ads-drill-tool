@@ -48,8 +48,8 @@ export default function QuestionPane({
   return (
     <div className="flex flex-col h-full">
       <div className="p-3 border-b flex items-center gap-2">
-        <MessageCircle className="h-4 w-4 text-primary" />
-        <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+        <MessageCircle className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+        <h2 className="text-xs font-bold text-violet-600 uppercase tracking-wider">
           質問ペイン
         </h2>
       </div>

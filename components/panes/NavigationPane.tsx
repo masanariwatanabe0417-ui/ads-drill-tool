@@ -65,7 +65,10 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView }: 
   return (
     <div className="flex flex-col h-full border-r bg-muted/30">
       <div className="p-3 border-b">
-        <p className="text-xs font-bold text-foreground">本気AIドリル</p>
+        <div className="flex items-center gap-1.5">
+          <GraduationCap className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+          <p className="text-xs font-bold text-foreground">本気AIドリル</p>
+        </div>
         <p className="text-xs text-muted-foreground mt-0.5">まとめ一覧</p>
       </div>
 
