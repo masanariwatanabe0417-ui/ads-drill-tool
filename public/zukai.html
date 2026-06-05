@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>本気AIドリル理解支援ツール — 図解</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans',sans-serif;background:#f8f7f4;color:#1a1a18;padding:2rem 1rem;}
+.page{max-width:720px;margin:0 auto;}
+.badge{display:inline-block;font-size:11px;font-weight:500;padding:4px 12px;border-radius:99px;background:#CECBF6;color:#3C3489;margin-bottom:.75rem;}
+.hero{text-align:center;padding:2rem 1.5rem;background:#fff;border-radius:12px;border:1px solid #e8e6e0;margin-bottom:1.5rem;}
+.hero h1{font-size:24px;font-weight:500;color:#1a1a18;margin-bottom:.5rem;}
+.hero p{font-size:14px;color:#666;line-height:1.7;}
+.url-chip{display:inline-flex;align-items:center;gap:6px;margin-top:1rem;font-size:13px;color:#185FA5;border:1px solid #B5D4F4;background:#E6F1FB;padding:6px 16px;border-radius:99px;text-decoration:none;}
+.sec{font-size:11px;font-weight:600;color:#999;letter-spacing:.08em;text-transform:uppercase;margin-bottom:.75rem;margin-top:1.5rem;}
+.pane-wrap{background:#fff;border:1px solid #e8e6e0;border-radius:12px;padding:1rem;margin-bottom:.5rem;}
+.pane-grid{display:grid;grid-template-columns:130px 1fr 1fr 1fr;gap:8px;min-height:150px;}
+.pane{border-radius:8px;padding:10px;border:1px solid rgba(0,0,0,.08);}
+.pl{font-size:10px;font-weight:600;margin-bottom:6px;}
+.pline{height:6px;border-radius:3px;margin-bottom:5px;}
+.pane-nav{background:#F1EFE8;} .pane-nav .pl{color:#5F5E5A;} .pane-nav .pline{background:#B4B2A9;}
+.pane-ss{background:#E6F1FB;} .pane-ss .pl{color:#185FA5;} .pane-ss .pline{background:#85B7EB;}
+.pane-teacher{background:#E1F5EE;} .pane-teacher .pl{color:#0F6E56;} .pane-teacher .pline{background:#5DCAA5;}
+.pane-qa{background:#FAEEDA;} .pane-qa .pl{color:#854F0B;} .pane-qa .pline{background:#EF9F27;}
+.pane-note{font-size:11px;color:#999;text-align:center;margin-bottom:1.5rem;line-height:1.6;}
+.ba-card{border-radius:10px;overflow:hidden;border:1px solid #e8e6e0;margin-bottom:12px;background:#fff;}
+.ba-label{font-size:12px;font-weight:600;padding:8px 14px;}
+.ba-before .ba-label{background:#FCEBEB;color:#A32D2D;}
+.ba-after .ba-label{background:#EAF3DE;color:#3B6D11;}
+.ba-img{width:100%;display:block;}
+.ba-cap{font-size:11px;color:#666;padding:8px 14px;line-height:1.6;background:#f8f7f4;border-top:1px solid #e8e6e0;}
+.iku-box{border:2px solid #534AB7;border-radius:12px;padding:1.25rem;margin-bottom:1.5rem;background:#EEEDFE;}
+.iku-title{font-size:15px;font-weight:600;color:#3C3489;margin-bottom:.5rem;}
+.iku-desc{font-size:13px;color:#534AB7;line-height:1.8;}
+.iku-desc strong{color:#3C3489;}
+.iku-cycle{display:flex;align-items:center;gap:8px;margin-top:1rem;flex-wrap:wrap;}
+.iku-step{background:#CECBF6;color:#3C3489;font-size:12px;font-weight:600;padding:5px 12px;border-radius:99px;}
+.iku-arr{color:#7F77DD;font-size:16px;}
+.cards3{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1.5rem;}
+.c3{background:#fff;border-radius:10px;border:1px solid #e8e6e0;padding:1rem;}
+.c3-dot{width:8px;height:8px;border-radius:50%;margin-bottom:8px;}
+.c3-title{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:6px;}
+.c3-body{font-size:12px;color:#666;line-height:1.6;}
+.c3-tag{display:inline-block;font-size:10px;padding:2px 8px;border-radius:99px;margin-top:6px;}
+.parallel-box{background:#f8f7f4;border-radius:8px;padding:.75rem;margin-top:8px;}
+.parallel-title{font-size:10px;font-weight:600;color:#999;margin-bottom:6px;}
+.parallel-row{display:flex;gap:4px;}
+.p-item{flex:1;background:#fff;border:1px solid #e8e6e0;border-radius:6px;padding:5px 4px;text-align:center;}
+.p-lbl{font-size:9px;color:#999;margin-bottom:2px;}
+.p-val{font-size:10px;font-weight:600;color:#1a1a18;}
+.future-box{background:#fff;border-radius:10px;border:1px solid #e8e6e0;padding:1rem;margin-bottom:1.5rem;}
+.future-title{font-size:13px;font-weight:600;color:#1a1a18;margin-bottom:8px;}
+.future-item{font-size:12px;color:#666;line-height:1.9;padding-left:1.2em;position:relative;}
+.future-item::before{content:"→";position:absolute;left:0;color:#aaa;}
+.quote-block{background:#fff;border-left:3px solid #534AB7;border-radius:0 10px 10px 0;padding:1rem 1.25rem;margin-bottom:1.5rem;}
+.quote-block p{font-size:13px;color:#666;line-height:1.8;}
+.quote-block strong{color:#1a1a18;font-weight:600;}
+.tech-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:2rem;}
+.tag{font-size:12px;padding:4px 12px;border-radius:99px;border:1px solid #e8e6e0;color:#666;background:#fff;}
+.divider{border:none;border-top:1px solid #e8e6e0;margin:1.5rem 0;}
+</style>
+</head>
+<body>
+<div class="page">
+<div class="hero">
+  <div class="badge">ADS 第3ヶ月目 課題</div>
+  <h1>本気AIドリル理解支援ツール</h1>
+  <p>問題のスクリーンショットを貼るだけで<br>AIが解説・コースまとめ・ポイントを自動生成。<br>質問するたびに「自分だけの解説」が育っていく。</p>
+  <a class="url-chip" href="https://ads-drill-tool.vercel.app" target="_blank">↗ ads-drill-tool.vercel.app（実際に動きます）</a>
+</div>
+<div class="sec">ツールの画面（4ペイン構成）</div>
+<div class="pane-wrap">
+  <div class="pane-grid">
+    <div class="pane pane-nav">
+      <div class="pl">① ナビ（自動生成）</div>
+      <div style="font-size:10px;color:#5F5E5A;line-height:1.7;">Git完全マスター<br>▸ 分散型の世界<br><span style="color:#888;">Q1 クラウドスト...</span></div>
+      <div style="margin-top:6px;font-size:9px;color:#bbb;border-top:1px dashed #ccc;padding-top:6px;">スクショを貼ると自動で追加</div>
+    </div>
+    <div class="pane pane-ss">
+      <div class="pl">② スクリーンショット</div>
+      <div style="border:2px dashed #85B7EB;border-radius:6px;height:44px;display:flex;align-items:center;justify-content:center;"><span style="font-size:10px;color:#378ADD;">問題 ⌘V</span></div>
+      <div style="border:1px solid #B5D4F4;border-radius:4px;height:28px;margin-top:5px;display:flex;align-items:center;justify-content:center;"><span style="font-size:10px;color:#378ADD;">解答 ⌘V</span></div>
+      <div style="border:2px dashed #B5D4F4;border-radius:4px;height:22px;margin-top:5px;display:flex;align-items:center;justify-content:center;opacity:.5;"><span style="font-size:9px;color:#378ADD;">コースマップ（未実装）</span></div>
+    </div>
+    <div class="pane pane-teacher">
+      <div class="pl">③ 先生ペイン</div>
+      <div class="pline" style="width:100%"></div>
+      <div class="pline" style="width:85%"></div>
+      <div style="display:flex;gap:4px;margin-top:6px;">
+        <div style="height:20px;flex:1;border-radius:4px;background:#9FE1CB;display:flex;align-items:center;justify-content:center;"><span style="font-size:8px;color:#085041;">用語</span></div>
+        <div style="height:20px;flex:1;border-radius:4px;background:#9FE1CB;display:flex;align-items:center;justify-content:center;"><span style="font-size:8px;color:#085041;">解説</span></div>
+        <div style="height:20px;flex:1;border-radius:4px;background:#9FE1CB;display:flex;align-items:center;justify-content:center;"><span style="font-size:8px;color:#085041;">まとめ</span></div>
+      </div>
+      <div style="margin-top:5px;font-size:9px;color:#bbb;border-top:1px dashed #9FE1CB;padding-top:5px;">現在テキストのみ・図解対応が課題</div>
+    </div>
+    <div class="pane pane-qa">
+      <div class="pl">④ 質問ペイン</div>
+      <div class="pline" style="width:90%"></div>
+      <div class="pline" style="width:70%"></div>
+      <div style="border:1px solid #EF9F27;border-radius:4px;height:26px;margin-top:8px;display:flex;align-items:center;padding:0 8px;"><span style="font-size:9px;color:#BA7517;">先生へ質問...</span></div>
+    </div>
+  </div>
+</div>
+<div class="pane-note">※ スクショを貼ると左ナビにシリーズ・コース・レッスン・Q番号が自動生成される。<br>ただし現状2枚対応のみ。コースマップ（3枚目）未実装のためシリーズまで読み取れない課題がある。</div>
+<div class="sec">before / after</div>
+<div class="ba-card ba-before">
+  <div class="ba-label">✕ Before — スクショなし（初期状態）</div>
+  <img class="ba-img" src="before.png" alt="before">
+  <div class="ba-cap">問題・解答スロットが空。先生ペインにはウェルカム画面のみ。左ナビにも何も表示されていない。</div>
+</div>
+<div class="ba-card ba-after" style="margin-bottom:1.5rem;">
+  <div class="ba-label">✓ After — スクショ貼り付け後</div>
+  <img class="ba-img" src="after.png" alt="after">
+  <div class="ba-cap">左ナビに「Git概念マスターコース ▸ 分散型の世界 ▸ Q1」が自動生成。先生ペインに用語解説・解説・ポイントが自動生成。質問への回答も先生ペインに追記済み。</div>
+</div>
+<div class="sec">最大の売り — 育成型ツール</div>
+<div class="iku-box">
+  <div class="iku-title">🌱 質問するたびに「自分だけの解説」が育つ</div>
+  <div class="iku-desc">スクショを貼った時点で解説が自動生成されるが、それがゴールではない。疑問を質問すると、その回答が<strong>先生ペインの解説に追記</strong>される。Q1→Q2→Q3と進むにつれ、コース・レッスンごとのまとめも更新され続ける。使えば使うほど、自分だけの教科書になっていく。</div>
+  <div class="iku-cycle">
+    <span class="iku-step">スクショ貼る</span><span class="iku-arr">→</span>
+    <span class="iku-step">解説が生成</span><span class="iku-arr">→</span>
+    <span class="iku-step">疑問を質問</span><span class="iku-arr">→</span>
+    <span class="iku-step">先生ペインに追記</span><span class="iku-arr">→</span>
+    <span class="iku-step">まとめが育つ</span>
+  </div>
+</div>
+<div class="sec">解決する課題・工夫点・苦戦点</div>
+<div class="cards3">
+  <div class="c3">
+    <div class="c3-dot" style="background:#534AB7;"></div>
+    <div class="c3-title">解決する課題</div>
+    <div class="c3-body">ADSドリルを解くとき、問題の意味が分からなくても先生がいない。スクショを貼るだけで即解説が得られる環境を作った</div>
+  </div>
+  <div class="c3">
+    <div class="c3-dot" style="background:#0F6E56;"></div>
+    <div class="c3-title">工夫したポイント</div>
+    <div class="c3-body">「用語解説」「問題解説」「ポイントまとめ」の3つをAIが同時並行で考えるため速い。レッスン・コースごとのまとめ自動生成。質問回答を先生ペインへ随時追記する育成型設計</div>
+    <div class="parallel-box">
+      <div class="parallel-title">3つ同時に処理（並列）</div>
+      <div class="parallel-row">
+        <div class="p-item"><div class="p-lbl">AI①</div><div class="p-val">用語解説</div></div>
+        <div class="p-item"><div class="p-lbl">AI②</div><div class="p-val">問題解説</div></div>
+        <div class="p-item"><div class="p-lbl">AI③</div><div class="p-val">ポイント</div></div>
+      </div>
+    </div>
+    <span class="c3-tag" style="background:#E1F5EE;color:#0F6E56;">育成型 / 高速</span>
+  </div>
+  <div class="c3">
+    <div class="c3-dot" style="background:#993C1D;"></div>
+    <div class="c3-title">苦戦したポイント</div>
+    <div class="c3-body">先生ペインが現在テキストのみ。図解対応が未実装。コースマップ（3枚目スロット）未実装のため、2枚のスクショだけではシリーズ名まで読み取れずレッスン情報の引き継ぎが課題</div>
+    <span class="c3-tag" style="background:#FAECE7;color:#993C1D;">フェーズ2で対応予定</span>
+  </div>
+</div>
+<div class="sec">作ってみた感想</div>
+<div class="quote-block">
+  <p>Claude Codeに頼りながら進めてしまい、<strong>Vercel・Next.jsといった技術を本当に理解できているか不安が残る。</strong>見た目や動作の感触は良く、手応えは感じている。ただ、<strong>保存機能が実装できないとこのツールを作った意味がなくなる</strong>という危機感もある。「理解しないまま進めない」というスクールの方針を改めて意識しながら、フェーズ2に臨みたい。</p>
+</div>
+<hr class="divider">
+<div class="sec">次のステップ（フェーズ2）</div>
+<div class="future-box">
+  <div class="future-title">発表後に取り組む課題</div>
+  <div class="future-item">先生ペインに図解を交えた解説の実装</div>
+  <div class="future-item">3スロット化（コースマップ画像）でシリーズ・コース・レッスン情報を自動認識</div>
+  <div class="future-item">セッション内コンテキスト引き継ぎ（Q1→Q2→Q3の流れを記憶）</div>
+  <div class="future-item">データ保存機能（過去のドリルを振り返れる教科書化）</div>
+</div>
+<div class="sec">使用技術</div>
+<div class="tech-row">
+  <span class="tag">Next.js 14</span>
+  <span class="tag">TypeScript</span>
+  <span class="tag">shadcn/ui</span>
+  <span class="tag">Tailwind CSS</span>
+  <span class="tag">Anthropic API</span>
+  <span class="tag">Vercel</span>
+  <span class="tag">GitHub</span>
+</div>
+</div>
+</body>
+</html>
