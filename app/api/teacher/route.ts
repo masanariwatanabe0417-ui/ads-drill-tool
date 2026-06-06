@@ -18,36 +18,41 @@ function buildImageBlocks(
 }
 
 // Agent①: スクリーンショットからレッスン情報を抽出（haiku - 高速）
-async function extractLessonInfo(imageBlocks: ImageBlock[]) {
+async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDataUrl?: string) {
+  const content: Anthropic.MessageParam["content"] = [];
+
+  if (courseMapImageDataUrl) {
+    content.push({ type: "text", text: "【コースマップ画像】（シリーズ名・コース名・現在のレッスン名を読み取ってください）" });
+    content.push(buildImageBlock(courseMapImageDataUrl));
+  }
+  content.push({ type: "text", text: "【問題画像】（問題番号「Q数字」を読み取ってください）" });
+  content.push(buildImageBlock(questionImageDataUrl));
+  content.push({
+    type: "text",
+    text: `上の画像から情報を読み取り、以下のJSON形式のみで返してください（他のテキストは含めない）：
+{
+  "series": "【コースマップ画像】の最上部に書かれたシリーズ名（例：Git完全マスターシリーズ）",
+  "course": "【コースマップ画像】の大見出しに書かれたコース名（例：Git概念マスターコース）",
+  "lesson": "【コースマップ画像】で再生ボタン▶またはピンク色でハイライトされているレッスンの「Lesson X レッスン名」形式（例：Lesson 6 分散型の世界）"
+}`,
+  });
+
   const message = await client.messages.create({
     model: "claude-haiku-4-5",
     max_tokens: 256,
-    messages: [
-      {
-        role: "user",
-        content: [
-          ...imageBlocks,
-          {
-            type: "text",
-            text: `このスクリーンショットから情報を読み取り、以下のJSON形式のみで返してください（他のテキストは含めない）：
-{
-  "series": "スクリーンショット右上のシリーズ名（例：React）",
-  "course": "コース名（例：Hooks編）",
-  "lesson": "レッスン名（例：Suspense と Error Boundary）",
-  "questionInfo": "問題番号（例：Q10）"
-}
-questionInfoは「Q数字」の形式にしてください。`,
-          },
-        ],
-      },
-    ],
+    messages: [{ role: "user", content }],
   });
   const raw = message.content.length > 0 && message.content[0].type === "text" ? message.content[0].text : "{}";
   const match = raw.match(/\{[\s\S]*\}/);
   try {
-    return match ? JSON.parse(match[0]) : { series: "不明", course: "不明", lesson: "不明", questionInfo: "Q?" };
+    const parsed = match ? JSON.parse(match[0]) : {};
+    return {
+      series: parsed.series ?? "不明",
+      course: parsed.course ?? "不明",
+      lesson: parsed.lesson ?? "不明",
+    };
   } catch {
-    return { series: "不明", course: "不明", lesson: "不明", questionInfo: "Q?" };
+    return { series: "不明", course: "不明", lesson: "不明" };
   }
 }
 
@@ -130,23 +135,15 @@ export async function POST(req: Request) {
       return Response.json({ error: "問題のスクリーンショットが必要です" }, { status: 400 });
     }
 
-    // extractLessonInfo: コースマップ（あれば）+ 問題のみ
-    const lessonInfoBlocks = buildImageBlocks(questionImageDataUrl, undefined, courseMapImageDataUrl);
     // glossary・explanation: 問題 + 解答のみ（コースマップ不要）
     const qaBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl);
 
-    // リクエストボディサイズをログ
-    const bodySize = (questionImageDataUrl?.length ?? 0) + (answerImageDataUrl?.length ?? 0) + (courseMapImageDataUrl?.length ?? 0);
-    console.log(`[teacher] body size: ${Math.round(bodySize / 1024)}KB`);
-
     // 3エージェント並列実行
-    const t0 = Date.now();
     const [lessonInfo, glossary, explanationData] = await Promise.all([
-      extractLessonInfo(lessonInfoBlocks),
+      extractLessonInfo(questionImageDataUrl, courseMapImageDataUrl),
       generateGlossary(qaBlocks),
       generateExplanation(qaBlocks, !!answerImageDataUrl),
     ]);
-    console.log(`[teacher] 3 agents done in ${Date.now() - t0}ms`);
 
     // 用語解説 + 解説本文をマージ
     const explanation = `${glossary}\n\n${explanationData.mainContent ?? ""}`.trim();

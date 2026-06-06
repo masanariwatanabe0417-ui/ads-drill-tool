@@ -46,13 +46,9 @@ function addToStudyLog(
   }
 
   const lesson = { ...course.lessons[lessonIdx], questions: [...course.lessons[lessonIdx].questions] };
-  const qIdx = lesson.questions.findIndex((q) => q.questionInfo === lessonInfo.questionInfo);
-  const newQ = { questionInfo: lessonInfo.questionInfo, keyLearning, explanation, timestamp: Date.now() };
-  if (qIdx === -1) {
-    lesson.questions.push(newQ);
-  } else {
-    lesson.questions[qIdx] = newQ;
-  }
+  const questionInfo = `Q${lesson.questions.length + 1}`;
+  const newQ = { questionInfo, keyLearning, explanation, timestamp: Date.now() };
+  lesson.questions.push(newQ);
 
   course.lessons[lessonIdx] = lesson;
   courses[courseIdx] = course;
@@ -103,12 +99,20 @@ export default function DrillTool() {
         if (data.lessonInfo && data.explanation) {
           const info: ExtractedLessonInfo = data.lessonInfo;
           setCurrentLessonInfo(info);
-          setStudyLog((prev) => addToStudyLog(prev, info, data.keyLearning ?? "", data.explanation));
+          const courseKey = makeCourseKey(info.series, info.course);
+          let assignedQuestionInfo = "Q1";
+          setStudyLog((prev) => {
+            const existingLesson = prev.courses
+              .find((c) => c.courseKey === courseKey)
+              ?.lessons.find((l) => l.lessonName === info.lesson);
+            assignedQuestionInfo = `Q${(existingLesson?.questions.length ?? 0) + 1}`;
+            return addToStudyLog(prev, info, data.keyLearning ?? "", data.explanation);
+          });
           setTeacherView({
             type: "question",
-            courseKey: makeCourseKey(info.series, info.course),
+            courseKey,
             lessonName: info.lesson,
-            questionInfo: info.questionInfo,
+            questionInfo: assignedQuestionInfo,
           });
         }
       } catch (err) {
@@ -226,7 +230,7 @@ export default function DrillTool() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      <div className="w-60 shrink-0">
+      <div className="w-72 shrink-0">
         <NavigationPane
           studyLog={studyLog}
           teacherView={teacherView}

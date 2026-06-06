@@ -18,7 +18,6 @@ export interface ExtractedLessonInfo {
   series: string;
   course: string;
   lesson: string;
-  questionInfo: string;
 }
 
 // 階層まとめ用データ構造

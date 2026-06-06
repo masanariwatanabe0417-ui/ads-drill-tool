@@ -152,7 +152,7 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView }: 
                               >
                                 <BookOpen className="h-3 w-3 shrink-0" />
                                 <div className="min-w-0">
-                                  <p className="text-xs truncate">{lesson.lessonName}</p>
+                                  <p className="text-xs leading-tight">{lesson.lessonName}</p>
                                   <p className="text-xs opacity-60">{lesson.questions.length}問</p>
                                 </div>
                               </button>
