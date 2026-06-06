@@ -86,7 +86,7 @@ async function generateGlossary(imageBlocks: ImageBlock[]) {
 // Agent③: 解説・keyLearning・覚えるべきポイントを生成（opus - 高品質）
 async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean) {
   const message = await client.messages.create({
-    model: "claude-opus-4-5",
+    model: "claude-haiku-4-5",
     max_tokens: 1024,
     messages: [
       {
@@ -130,14 +130,23 @@ export async function POST(req: Request) {
       return Response.json({ error: "問題のスクリーンショットが必要です" }, { status: 400 });
     }
 
-    const imageBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl);
+    // extractLessonInfo: コースマップ（あれば）+ 問題のみ
+    const lessonInfoBlocks = buildImageBlocks(questionImageDataUrl, undefined, courseMapImageDataUrl);
+    // glossary・explanation: 問題 + 解答のみ（コースマップ不要）
+    const qaBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl);
+
+    // リクエストボディサイズをログ
+    const bodySize = (questionImageDataUrl?.length ?? 0) + (answerImageDataUrl?.length ?? 0) + (courseMapImageDataUrl?.length ?? 0);
+    console.log(`[teacher] body size: ${Math.round(bodySize / 1024)}KB`);
 
     // 3エージェント並列実行
+    const t0 = Date.now();
     const [lessonInfo, glossary, explanationData] = await Promise.all([
-      extractLessonInfo(imageBlocks),
-      generateGlossary(imageBlocks),
-      generateExplanation(imageBlocks, !!answerImageDataUrl),
+      extractLessonInfo(lessonInfoBlocks),
+      generateGlossary(qaBlocks),
+      generateExplanation(qaBlocks, !!answerImageDataUrl),
     ]);
+    console.log(`[teacher] 3 agents done in ${Date.now() - t0}ms`);
 
     // 用語解説 + 解説本文をマージ
     const explanation = `${glossary}\n\n${explanationData.mainContent ?? ""}`.trim();

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import NavigationPane from "./panes/NavigationPane";
 import ScreenshotPane from "./panes/ScreenshotPane";
 import TeacherPane from "./panes/TeacherPane";
@@ -127,13 +127,23 @@ export default function DrillTool() {
 
   const handleScreenshotUpload = useCallback(
     (type: ScreenshotSlot, dataUrl: string) => {
-      const next = { ...screenshots, [slotKey(type)]: dataUrl };
-      setScreenshots(next);
-      fetchTeacherExplanation(next);
+      setScreenshots((prev) => ({ ...prev, [slotKey(type)]: dataUrl }));
       setQaEntries([]);
     },
-    [fetchTeacherExplanation, screenshots]
+    []
   );
+
+  const handleAnalyze = useCallback(() => {
+    fetchTeacherExplanation(screenshots);
+  }, [fetchTeacherExplanation, screenshots]);
+
+  // 解答がセットされたら自動解析
+  useEffect(() => {
+    if (screenshots.answerImage && screenshots.questionImage) {
+      fetchTeacherExplanation(screenshots);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [screenshots.answerImage]);
 
   const handleScreenshotClear = useCallback((type: ScreenshotSlot) => {
     setScreenshots((prev) => ({ ...prev, [slotKey(type)]: null }));
@@ -228,7 +238,8 @@ export default function DrillTool() {
           screenshots={screenshots}
           onScreenshotUpload={handleScreenshotUpload}
           onScreenshotClear={handleScreenshotClear}
-          disabled={false}
+          onAnalyze={handleAnalyze}
+          disabled={teacherLoading}
         />
       </div>
       <div className="flex-1 min-w-[300px]">
