@@ -5,10 +5,15 @@ const client = new Anthropic();
 
 type ImageBlock = ReturnType<typeof buildImageBlock>;
 
-function buildImageBlocks(questionImageDataUrl: string, answerImageDataUrl?: string): ImageBlock[] {
+function buildImageBlocks(
+  questionImageDataUrl: string,
+  answerImageDataUrl?: string,
+  courseMapImageDataUrl?: string
+): ImageBlock[] {
   return [
     buildImageBlock(questionImageDataUrl),
     ...(answerImageDataUrl ? [buildImageBlock(answerImageDataUrl)] : []),
+    ...(courseMapImageDataUrl ? [buildImageBlock(courseMapImageDataUrl)] : []),
   ];
 }
 
@@ -119,13 +124,13 @@ async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean
 
 export async function POST(req: Request) {
   try {
-    const { questionImageDataUrl, answerImageDataUrl } = await req.json();
+    const { questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl } = await req.json();
 
     if (!questionImageDataUrl) {
       return Response.json({ error: "問題のスクリーンショットが必要です" }, { status: 400 });
     }
 
-    const imageBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl);
+    const imageBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl);
 
     // 3エージェント並列実行
     const [lessonInfo, glossary, explanationData] = await Promise.all([

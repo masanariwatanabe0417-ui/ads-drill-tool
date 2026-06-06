@@ -1,7 +1,10 @@
 export interface DrillScreenshots {
   questionImage: string | null;
   answerImage: string | null;
+  courseMapImage: string | null;
 }
+
+export type ScreenshotSlot = "question" | "answer" | "courseMap";
 
 export interface QAEntry {
   id: string;

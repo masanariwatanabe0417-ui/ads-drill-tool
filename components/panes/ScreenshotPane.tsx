@@ -1,6 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAutoScreenshot } from "@/lib/hooks/useAutoScreenshot";
+import { Upload, X, Clipboard, Camera } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { DrillScreenshots, ScreenshotSlot } from "@/lib/types";
+import { cn } from "@/lib/utils";
 
 function usePasteShortcut() {
   const [label, setLabel] = useState("Ctrl+V");
@@ -9,16 +15,11 @@ function usePasteShortcut() {
   }, []);
   return label;
 }
-import { Upload, X, Clipboard, Camera } from "lucide-react";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { DrillScreenshots } from "@/lib/types";
-import { cn } from "@/lib/utils";
 
 interface ScreenshotPaneProps {
   screenshots: DrillScreenshots;
-  onScreenshotUpload: (type: "question" | "answer", dataUrl: string) => void;
-  onScreenshotClear: (type: "question" | "answer") => void;
+  onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
+  onScreenshotClear: (type: ScreenshotSlot) => void;
   disabled: boolean;
 }
 
@@ -31,15 +32,15 @@ const toBase64 = (blob: Blob): Promise<string> =>
   });
 
 interface SlotCardProps {
-  type: "question" | "answer";
+  type: ScreenshotSlot;
   label: string;
   image: string | null;
   inputRef: React.RefObject<HTMLInputElement>;
-  activeSlot: "question" | "answer";
-  setActiveSlot: (slot: "question" | "answer") => void;
-  onScreenshotClear: (type: "question" | "answer") => void;
+  activeSlot: ScreenshotSlot;
+  setActiveSlot: (slot: ScreenshotSlot) => void;
+  onScreenshotClear: (type: ScreenshotSlot) => void;
   disabled: boolean;
-  onFileChange: (e: React.ChangeEvent<HTMLInputElement>, type: "question" | "answer") => void;
+  onFileChange: (e: React.ChangeEvent<HTMLInputElement>, type: ScreenshotSlot) => void;
   pasteShortcut: string;
 }
 
@@ -71,9 +72,7 @@ const SlotCard = ({
       <div
         className={cn(
           "flex items-center justify-between px-3 py-1.5 border-b rounded-t-lg transition-colors",
-          isActive
-            ? "bg-primary/10"
-            : "bg-muted/40 group-hover:bg-muted/70"
+          isActive ? "bg-primary/10" : "bg-muted/40 group-hover:bg-muted/70"
         )}
       >
         <div className="flex items-center gap-1.5">
@@ -109,12 +108,12 @@ const SlotCard = ({
       {image ? (
         <div className="p-2">
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={image} alt={label} className="w-full rounded object-contain max-h-64" />
+          <img src={image} alt={label} className="w-full rounded object-contain max-h-48" />
         </div>
       ) : (
         <div
           className={cn(
-            "m-2 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 p-5 text-center transition-all duration-150",
+            "m-2 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-2 p-4 text-center transition-all duration-150",
             isActive
               ? "border-primary/40 bg-primary/5"
               : "border-muted-foreground/20 bg-transparent opacity-50 group-hover:opacity-80 group-hover:border-muted-foreground/40 group-hover:bg-muted/20"
@@ -122,7 +121,7 @@ const SlotCard = ({
         >
           <Upload
             className={cn(
-              "h-7 w-7 transition-colors",
+              "h-6 w-6 transition-colors",
               isActive ? "text-primary/60" : "text-muted-foreground/40 group-hover:text-muted-foreground/70"
             )}
           />
@@ -172,13 +171,30 @@ export default function ScreenshotPane({
   onScreenshotClear,
   disabled,
 }: ScreenshotPaneProps) {
-  const [activeSlot, setActiveSlot] = useState<"question" | "answer">("question");
+  const [activeSlot, setActiveSlot] = useState<ScreenshotSlot>("courseMap");
+  const [isAutoEnabled, setIsAutoEnabled] = useState(false);
   const questionInputRef = useRef<HTMLInputElement>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
+  const courseMapInputRef = useRef<HTMLInputElement>(null);
   const pasteShortcut = usePasteShortcut();
 
+  // コースマップが埋まったら自動で「問題」へフォーカス移動
+  // （Q2以降はコースマップが既に入っているので、初回マウント時も同様に動作）
+  useEffect(() => {
+    if (screenshots.courseMapImage && activeSlot === "courseMap") {
+      setActiveSlot("question");
+    }
+  }, [screenshots.courseMapImage]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Desktop フォルダ監視・自動取り込み
+  useAutoScreenshot({
+    isEnabled: isAutoEnabled,
+    screenshots,
+    onScreenshotUpload,
+  });
+
   const handleFileChange = useCallback(
-    async (e: React.ChangeEvent<HTMLInputElement>, type: "question" | "answer") => {
+    async (e: React.ChangeEvent<HTMLInputElement>, type: ScreenshotSlot) => {
       const file = e.target.files?.[0];
       if (!file) return;
       const dataUrl = await toBase64(file);
@@ -206,18 +222,54 @@ export default function ScreenshotPane({
   return (
     <div className="flex flex-col h-full border-r">
       <div className="p-3 border-b">
-        <div className="flex items-center gap-1.5">
-          <Camera className="h-3.5 w-3.5 text-amber-500 shrink-0" />
-          <h2 className="text-xs font-bold text-amber-600 uppercase tracking-wider">
-            スクリーンショット
-          </h2>
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex items-center gap-1.5">
+            <Camera className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+            <h2 className="text-xs font-bold text-amber-600 uppercase tracking-wider">
+              スクリーンショット
+            </h2>
+          </div>
+          {/* 自動取り込みトグル */}
+          <button
+            onClick={() => setIsAutoEnabled((prev) => !prev)}
+            title="Desktop の新しいスクリーンショットを自動取り込み"
+            className={cn(
+              "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors",
+              isAutoEnabled
+                ? "bg-green-100 text-green-700 hover:bg-green-200"
+                : "bg-muted text-muted-foreground hover:bg-muted/80"
+            )}
+          >
+            <span
+              className={cn(
+                "h-1.5 w-1.5 rounded-full transition-colors",
+                isAutoEnabled ? "animate-pulse bg-green-500" : "bg-muted-foreground/40"
+              )}
+            />
+            自動取込
+          </button>
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">
-          枠をクリック → {pasteShortcut} で貼り付け
+          {isAutoEnabled
+            ? "Desktop のスクショを自動検出中..."
+            : `枠をクリック → ${pasteShortcut} で貼り付け`}
         </p>
       </div>
+
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-3">
+          <SlotCard
+            type="courseMap"
+            label="コースマップ"
+            image={screenshots.courseMapImage}
+            inputRef={courseMapInputRef}
+            activeSlot={activeSlot}
+            setActiveSlot={setActiveSlot}
+            onScreenshotClear={onScreenshotClear}
+            disabled={disabled}
+            onFileChange={handleFileChange}
+            pasteShortcut={pasteShortcut}
+          />
           <SlotCard
             type="question"
             label="問題"

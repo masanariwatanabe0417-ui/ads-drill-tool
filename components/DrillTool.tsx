@@ -9,6 +9,7 @@ import {
   DrillScreenshots,
   ExtractedLessonInfo,
   QAEntry,
+  ScreenshotSlot,
   StudyLog,
   TeacherView,
 } from "@/lib/types";
@@ -70,6 +71,7 @@ export default function DrillTool() {
   const [screenshots, setScreenshots] = useState<DrillScreenshots>({
     questionImage: null,
     answerImage: null,
+    courseMapImage: null,
   });
   const [currentLessonInfo, setCurrentLessonInfo] = useState<ExtractedLessonInfo | null>(null);
   const [studyLog, setStudyLog] = useState<StudyLog>({ courses: [] });
@@ -90,6 +92,7 @@ export default function DrillTool() {
           body: JSON.stringify({
             questionImageDataUrl: newScreenshots.questionImage,
             answerImageDataUrl: newScreenshots.answerImage,
+            courseMapImageDataUrl: newScreenshots.courseMapImage,
           }),
         });
         if (!res.ok) {
@@ -117,10 +120,14 @@ export default function DrillTool() {
     []
   );
 
+  const slotKey = (type: ScreenshotSlot): keyof DrillScreenshots =>
+    type === "question" ? "questionImage"
+    : type === "answer" ? "answerImage"
+    : "courseMapImage";
+
   const handleScreenshotUpload = useCallback(
-    (type: "question" | "answer", dataUrl: string) => {
-      const key = type === "question" ? "questionImage" : "answerImage";
-      const next = { ...screenshots, [key]: dataUrl };
+    (type: ScreenshotSlot, dataUrl: string) => {
+      const next = { ...screenshots, [slotKey(type)]: dataUrl };
       setScreenshots(next);
       fetchTeacherExplanation(next);
       setQaEntries([]);
@@ -128,11 +135,8 @@ export default function DrillTool() {
     [fetchTeacherExplanation, screenshots]
   );
 
-  const handleScreenshotClear = useCallback((type: "question" | "answer") => {
-    setScreenshots((prev) => ({
-      ...prev,
-      [type === "question" ? "questionImage" : "answerImage"]: null,
-    }));
+  const handleScreenshotClear = useCallback((type: ScreenshotSlot) => {
+    setScreenshots((prev) => ({ ...prev, [slotKey(type)]: null }));
     if (type === "question") {
       setTeacherView(null);
       setCurrentLessonInfo(null);
@@ -227,7 +231,7 @@ export default function DrillTool() {
           disabled={false}
         />
       </div>
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-[300px]">
         <TeacherPane
           studyLog={studyLog}
           teacherView={teacherView}
