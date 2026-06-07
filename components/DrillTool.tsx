@@ -5,6 +5,7 @@ import NavigationPane from "./panes/NavigationPane";
 import ScreenshotPane from "./panes/ScreenshotPane";
 import TeacherPane from "./panes/TeacherPane";
 import QuestionPane from "./panes/QuestionPane";
+import DrillSidePanel from "./DrillSidePanel";
 import {
   DrillScreenshots,
   ExtractedLessonInfo,
@@ -75,12 +76,16 @@ export default function DrillTool() {
   const [teacherLoading, setTeacherLoading] = useState(false);
   const [qaEntries, setQaEntries] = useState<QAEntry[]>([]);
   const [questionLoading, setQuestionLoading] = useState(false);
+  const [teacherError, setTeacherError] = useState<string | null>(null);
+  const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
+  const [isAutoEnabled, setIsAutoEnabled] = useState(false);
 
   const fetchTeacherExplanation = useCallback(
     async (newScreenshots: DrillScreenshots) => {
       if (!newScreenshots.questionImage) return;
       setTeacherLoading(true);
       setTeacherView(null);
+      setTeacherError(null);
       try {
         const res = await fetch("/api/teacher", {
           method: "POST",
@@ -117,6 +122,7 @@ export default function DrillTool() {
         }
       } catch (err) {
         console.error(err);
+        setTeacherError(err instanceof Error ? err.message : "解析中にエラーが発生しました");
       } finally {
         setTeacherLoading(false);
       }
@@ -230,6 +236,10 @@ export default function DrillTool() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
+      <DrillSidePanel
+        isOpen={isDrillPanelOpen}
+        onClose={() => setIsDrillPanelOpen(false)}
+      />
       <div className="w-72 shrink-0">
         <NavigationPane
           studyLog={studyLog}
@@ -243,7 +253,10 @@ export default function DrillTool() {
           onScreenshotUpload={handleScreenshotUpload}
           onScreenshotClear={handleScreenshotClear}
           onAnalyze={handleAnalyze}
+          onOpenDrill={() => { setIsDrillPanelOpen(true); setIsAutoEnabled(true); }}
           disabled={teacherLoading}
+          isAutoEnabled={isAutoEnabled}
+          onAutoToggle={setIsAutoEnabled}
         />
       </div>
       <div className="flex-1 min-w-[300px]">
@@ -251,6 +264,7 @@ export default function DrillTool() {
           studyLog={studyLog}
           teacherView={teacherView}
           isLoading={teacherLoading}
+          error={teacherError}
           currentLessonInfo={currentLessonInfo}
           hasScreenshots={!!screenshots.questionImage}
         />

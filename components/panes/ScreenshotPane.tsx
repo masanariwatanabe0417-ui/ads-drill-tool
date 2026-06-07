@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutoScreenshot } from "@/lib/hooks/useAutoScreenshot";
-import { Upload, X, Clipboard, Camera } from "lucide-react";
+import { Upload, X, Clipboard, Camera, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DrillScreenshots, ScreenshotSlot } from "@/lib/types";
@@ -21,7 +21,10 @@ interface ScreenshotPaneProps {
   onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
   onScreenshotClear: (type: ScreenshotSlot) => void;
   onAnalyze: () => void;
+  onOpenDrill: () => void;
   disabled: boolean;
+  isAutoEnabled: boolean;
+  onAutoToggle: (enabled: boolean) => void;
 }
 
 // 画像を最大幅 1200px・JPEG 85% に圧縮してから base64 化
@@ -180,10 +183,12 @@ export default function ScreenshotPane({
   onScreenshotUpload,
   onScreenshotClear,
   onAnalyze,
+  onOpenDrill,
   disabled,
+  isAutoEnabled,
+  onAutoToggle,
 }: ScreenshotPaneProps) {
   const [activeSlot, setActiveSlot] = useState<ScreenshotSlot>("courseMap");
-  const [isAutoEnabled, setIsAutoEnabled] = useState(false);
   const questionInputRef = useRef<HTMLInputElement>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
   const courseMapInputRef = useRef<HTMLInputElement>(null);
@@ -242,7 +247,7 @@ export default function ScreenshotPane({
           </div>
           {/* 自動取り込みトグル */}
           <button
-            onClick={() => setIsAutoEnabled((prev) => !prev)}
+            onClick={() => onAutoToggle(!isAutoEnabled)}
             title="Desktop の新しいスクリーンショットを自動取り込み"
             className={cn(
               "flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold transition-colors",
@@ -265,14 +270,24 @@ export default function ScreenshotPane({
             ? "Desktop のスクショを自動検出中..."
             : `枠をクリック → ${pasteShortcut} で貼り付け`}
         </p>
-        {/* 解析ボタン */}
-        <Button
-          className="w-full mt-2 h-8 text-xs font-bold"
-          disabled={!screenshots.questionImage || disabled}
-          onClick={onAnalyze}
-        >
-          解析する
-        </Button>
+        {/* ドリルを開く / 解析ボタン */}
+        <div className="flex gap-1.5 mt-2">
+          <Button
+            variant="outline"
+            className="flex-1 h-8 text-xs gap-1"
+            onClick={onOpenDrill}
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            ドリルを開く
+          </Button>
+          <Button
+            className="flex-1 h-8 text-xs font-bold"
+            disabled={!screenshots.questionImage || disabled}
+            onClick={onAnalyze}
+          >
+            解析する
+          </Button>
+        </div>
       </div>
 
       <ScrollArea className="flex-1">

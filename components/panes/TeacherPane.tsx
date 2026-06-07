@@ -13,6 +13,7 @@ interface TeacherPaneProps {
   isLoading: boolean;
   hasScreenshots: boolean;
   currentLessonInfo: ExtractedLessonInfo | null;
+  error?: string | null;
 }
 
 const markdownComponents: Components = {
@@ -233,6 +234,7 @@ export default function TeacherPane({
   isLoading,
   hasScreenshots,
   currentLessonInfo,
+  error,
 }: TeacherPaneProps) {
   const viewLabel =
     teacherView?.type === "course"
@@ -269,6 +271,11 @@ export default function TeacherPane({
               <Loader2 className="h-8 w-8 animate-spin" />
               <p className="text-sm">スクリーンショットを読み取り中...</p>
               <p className="text-xs">シリーズ名・レッスン名・解説を同時に生成しています</p>
+            </div>
+          ) : error ? (
+            <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+              <p className="text-sm font-medium text-destructive">解析に失敗しました</p>
+              <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
             renderContent(studyLog, teacherView)
