@@ -11,10 +11,12 @@
 - Anthropic SDK（claude-haiku-4-5）
 - 開発サーバー: `npm run dev` → http://localhost:3000
 
-## 環境変数（新PCでは必須）
-`.env` はgitignoreされているため、新規クローン後に手動作成が必要：
-```
-ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+## 環境変数（各PCで必須・gitignoreのため手動作成）
+APIキー: `sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA`
+
+作成コマンド：
+```bash
+echo 'ANTHROPIC_API_KEY=sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA' > .env
 ```
 
 ## 4ペイン構成
@@ -48,12 +50,32 @@ NavigationPane(w-72) | ScreenshotPane(w-72) | TeacherPane(flex-1) | QuestionPane
 3. ストリーミング対応（解説表示を逐次的に）
 4. studyLogのエクスポート・バックアップ機能
 
-## 新PCでの始め方
+## PCごとの起動手順
+
+### 自宅PC（毎回）
+```bash
+cd ~/Desktop/ads-drill-tool
+npm run dev
+```
+※ .env がない場合は上記「環境変数」のコマンドを先に実行
+
+### 職場PC（毎回）
+```bash
+cd ~/Desktop/ads-drill-tool
+npm run dev
+```
+※ 初回セットアップ済み（2026-06-07完了）。.envも作成済み。
+
+### 新規PCに初めて入れる場合
 ```bash
 git clone https://github.com/masanariwatanabe0417-ui/ads-drill-tool.git
 cd ads-drill-tool
 npm install
-# .env ファイルを作成して ANTHROPIC_API_KEY を設定
+echo 'ANTHROPIC_API_KEY=sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA' > .env
 npm run dev
 ```
-※ studyLog.json はローカルPC固有のため、各PCで独立して蓄積される
+
+## studyLog（学習記録）について
+- 保存場所: `~/Desktop/AIドリル取込済み/studyLog.json`
+- デスクトップはiCloudで同期されているため、自宅PC・職場PCで自動共有される
+- ツール起動時に自動で読み込まれる
