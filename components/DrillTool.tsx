@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import NavigationPane from "./panes/NavigationPane";
 import ScreenshotPane from "./panes/ScreenshotPane";
 import TeacherPane from "./panes/TeacherPane";
@@ -22,6 +22,7 @@ function makeCourseKey(series: string, course: string) {
 function addToStudyLog(
   log: StudyLog,
   lessonInfo: ExtractedLessonInfo,
+  questionInfo: string,
   keyLearning: string,
   explanation: string
 ): StudyLog {
@@ -47,9 +48,17 @@ function addToStudyLog(
   }
 
   const lesson = { ...course.lessons[lessonIdx], questions: [...course.lessons[lessonIdx].questions] };
-  const questionInfo = `Q${lesson.questions.length + 1}`;
-  const newQ = { questionInfo, keyLearning, explanation, timestamp: Date.now() };
-  lesson.questions.push(newQ);
+  const entry = { questionInfo, keyLearning, explanation, timestamp: Date.now() };
+  const existingIdx = lesson.questions.findIndex((q) => q.questionInfo === questionInfo);
+  if (existingIdx !== -1) {
+    lesson.questions[existingIdx] = entry;
+  } else {
+    lesson.questions.push(entry);
+    lesson.questions.sort((a, b) => {
+      const n = (s: string) => parseInt(s.replace(/\D/g, ""), 10) || 0;
+      return n(a.questionInfo) - n(b.questionInfo);
+    });
+  }
 
   course.lessons[lessonIdx] = lesson;
   courses[courseIdx] = course;
@@ -80,6 +89,26 @@ export default function DrillTool() {
   const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
 
+  // 起動時に保存済み studyLog を読み込む
+  useEffect(() => {
+    fetch("/api/study-log")
+      .then((r) => r.json())
+      .then((data) => { if (data?.courses) setStudyLog(data); })
+      .catch(() => {});
+  }, []);
+
+  // studyLog が変化したら JSON に保存
+  const studyLogRef = useRef(studyLog);
+  studyLogRef.current = studyLog;
+  useEffect(() => {
+    if (studyLog.courses.length === 0) return;
+    fetch("/api/study-log", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(studyLog),
+    }).catch(() => {});
+  }, [studyLog]);
+
   const fetchTeacherExplanation = useCallback(
     async (newScreenshots: DrillScreenshots) => {
       if (!newScreenshots.questionImage) return;
@@ -105,13 +134,17 @@ export default function DrillTool() {
           const info: ExtractedLessonInfo = data.lessonInfo;
           setCurrentLessonInfo(info);
           const courseKey = makeCourseKey(info.series, info.course);
-          let assignedQuestionInfo = "Q1";
+          // ドリル本来のQ番号を使用。取得できなければ既存件数+1でフォールバック
+          const drillQ: string | null = data.lessonInfo.questionNumber ?? null;
+          let assignedQuestionInfo = drillQ ?? "Q?";
           setStudyLog((prev) => {
-            const existingLesson = prev.courses
-              .find((c) => c.courseKey === courseKey)
-              ?.lessons.find((l) => l.lessonName === info.lesson);
-            assignedQuestionInfo = `Q${(existingLesson?.questions.length ?? 0) + 1}`;
-            return addToStudyLog(prev, info, data.keyLearning ?? "", data.explanation);
+            if (!drillQ) {
+              const existingLesson = prev.courses
+                .find((c) => c.courseKey === courseKey)
+                ?.lessons.find((l) => l.lessonName === info.lesson);
+              assignedQuestionInfo = `Q${(existingLesson?.questions.length ?? 0) + 1}`;
+            }
+            return addToStudyLog(prev, info, assignedQuestionInfo, data.keyLearning ?? "", data.explanation);
           });
           setTeacherView({
             type: "question",
@@ -143,9 +176,12 @@ export default function DrillTool() {
     []
   );
 
-  const handleAnalyze = useCallback(() => {
-    fetchTeacherExplanation(screenshots);
-  }, [fetchTeacherExplanation, screenshots]);
+  // 次の問題へ：問題・解答スロットをクリア（コースマップは維持）
+  const handleNextQuestion = useCallback(() => {
+    setScreenshots((prev) => ({ ...prev, questionImage: null, answerImage: null }));
+    setTeacherView(null);
+    setQaEntries([]);
+  }, []);
 
   // 解答がセットされたら自動解析
   useEffect(() => {
@@ -252,7 +288,7 @@ export default function DrillTool() {
           screenshots={screenshots}
           onScreenshotUpload={handleScreenshotUpload}
           onScreenshotClear={handleScreenshotClear}
-          onAnalyze={handleAnalyze}
+          onNextQuestion={handleNextQuestion}
           onOpenDrill={() => { setIsDrillPanelOpen(true); setIsAutoEnabled(true); }}
           disabled={teacherLoading}
           isAutoEnabled={isAutoEnabled}

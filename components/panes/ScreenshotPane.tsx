@@ -20,7 +20,7 @@ interface ScreenshotPaneProps {
   screenshots: DrillScreenshots;
   onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
   onScreenshotClear: (type: ScreenshotSlot) => void;
-  onAnalyze: () => void;
+  onNextQuestion: () => void;
   onOpenDrill: () => void;
   disabled: boolean;
   isAutoEnabled: boolean;
@@ -182,7 +182,7 @@ export default function ScreenshotPane({
   screenshots,
   onScreenshotUpload,
   onScreenshotClear,
-  onAnalyze,
+  onNextQuestion,
   onOpenDrill,
   disabled,
   isAutoEnabled,
@@ -270,7 +270,7 @@ export default function ScreenshotPane({
             ? "Desktop のスクショを自動検出中..."
             : `枠をクリック → ${pasteShortcut} で貼り付け`}
         </p>
-        {/* ドリルを開く / 解析ボタン */}
+        {/* ドリルを開く / 次の問題へ */}
         <div className="flex gap-1.5 mt-2">
           <Button
             variant="outline"
@@ -281,11 +281,12 @@ export default function ScreenshotPane({
             ドリルを開く
           </Button>
           <Button
+            variant="outline"
             className="flex-1 h-8 text-xs font-bold"
             disabled={!screenshots.questionImage || disabled}
-            onClick={onAnalyze}
+            onClick={onNextQuestion}
           >
-            解析する
+            次の問題へ
           </Button>
         </div>
       </div>

@@ -27,12 +27,14 @@ export async function GET(request: NextRequest) {
     const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
-    // 取り込み済みファイルをゴミ箱へ移動
-    const trashPath = path.join(os.homedir(), ".Trash", path.basename(resolvedPath));
+    // 取り込み済みファイルを ~/Desktop/AIドリル取込済み/YYYY-MM-DD/ へ移動
     try {
-      fs.renameSync(resolvedPath, trashPath);
+      const today = new Date().toISOString().slice(0, 10);
+      const destDir = path.join(os.homedir(), "Desktop", "AIドリル取込済み", today);
+      fs.mkdirSync(destDir, { recursive: true });
+      fs.renameSync(resolvedPath, path.join(destDir, path.basename(resolvedPath)));
     } catch {
-      // ゴミ箱への移動に失敗しても取り込みは続行
+      // 移動に失敗しても取り込みは続行
     }
 
     return NextResponse.json({ dataUrl, fileName: path.basename(resolvedPath) });

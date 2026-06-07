@@ -22,9 +22,9 @@ export interface ExtractedLessonInfo {
 
 // 階層まとめ用データ構造
 export interface QuestionEntry {
-  questionInfo: string;  // "Q1", "Q10" など
-  keyLearning: string;   // 要点1〜2文
-  explanation: string;   // 全解説テキスト
+  questionInfo: string;   // "Q1", "Q10" など（ドリル本来のQ番号）
+  keyLearning: string;    // 要点1〜2文
+  explanation: string;    // 全解説テキスト
   timestamp: number;
 }
 

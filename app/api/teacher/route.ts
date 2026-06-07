@@ -33,7 +33,8 @@ async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDat
 {
   "series": "【コースマップ画像】の最上部に書かれたシリーズ名（例：Git完全マスターシリーズ）",
   "course": "【コースマップ画像】の大見出しに書かれたコース名（例：Git概念マスターコース）",
-  "lesson": "【コースマップ画像】で再生ボタン▶またはピンク色でハイライトされているレッスンの「Lesson X レッスン名」形式（例：Lesson 6 分散型の世界）"
+  "lesson": "【コースマップ画像】で再生ボタン▶またはピンク色でハイライトされているレッスンの「Lesson X レッスン名」形式（例：Lesson 6 分散型の世界）",
+  "questionNumber": "【問題画像】の左上などに表示されているQ番号の数字のみ（例：「Q1/10」なら「Q1」、「Q3」なら「Q3」）"
 }`,
   });
 
@@ -50,9 +51,10 @@ async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDat
       series: parsed.series ?? "不明",
       course: parsed.course ?? "不明",
       lesson: parsed.lesson ?? "不明",
+      questionNumber: parsed.questionNumber ?? null,
     };
   } catch {
-    return { series: "不明", course: "不明", lesson: "不明" };
+    return { series: "不明", course: "不明", lesson: "不明", questionNumber: null };
   }
 }
 
