@@ -12,7 +12,10 @@
       "Bash(npx tsc *)",
       "Skill(run)",
       "Skill(run:*)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(pkill -f \"next dev\")",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)"
     ]
   }
 }

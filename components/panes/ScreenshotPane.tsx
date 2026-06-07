@@ -20,15 +20,25 @@ interface ScreenshotPaneProps {
   screenshots: DrillScreenshots;
   onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
   onScreenshotClear: (type: ScreenshotSlot) => void;
+  onAnalyze: () => void;
   disabled: boolean;
 }
 
-const toBase64 = (blob: Blob): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
+// 画像を最大幅 1200px・JPEG 85% に圧縮してから base64 化
+const resizeAndEncode = (blob: Blob, maxWidth = 1200): Promise<string> =>
+  new Promise((resolve) => {
+    const img = new Image();
+    const url = URL.createObjectURL(blob);
+    img.onload = () => {
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.src = url;
   });
 
 interface SlotCardProps {
@@ -169,6 +179,7 @@ export default function ScreenshotPane({
   screenshots,
   onScreenshotUpload,
   onScreenshotClear,
+  onAnalyze,
   disabled,
 }: ScreenshotPaneProps) {
   const [activeSlot, setActiveSlot] = useState<ScreenshotSlot>("courseMap");
@@ -197,7 +208,7 @@ export default function ScreenshotPane({
     async (e: React.ChangeEvent<HTMLInputElement>, type: ScreenshotSlot) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const dataUrl = await toBase64(file);
+      const dataUrl = await resizeAndEncode(file);
       onScreenshotUpload(type, dataUrl);
       e.target.value = "";
     },
@@ -212,7 +223,7 @@ export default function ScreenshotPane({
       if (!item) return;
       const blob = item.getAsFile();
       if (!blob) return;
-      const dataUrl = await toBase64(blob);
+      const dataUrl = await resizeAndEncode(blob);
       onScreenshotUpload(activeSlot, dataUrl);
     };
     window.addEventListener("paste", handlePaste);
@@ -254,6 +265,14 @@ export default function ScreenshotPane({
             ? "Desktop のスクショを自動検出中..."
             : `枠をクリック → ${pasteShortcut} で貼り付け`}
         </p>
+        {/* 解析ボタン */}
+        <Button
+          className="w-full mt-2 h-8 text-xs font-bold"
+          disabled={!screenshots.questionImage || disabled}
+          onClick={onAnalyze}
+        >
+          解析する
+        </Button>
       </div>
 
       <ScrollArea className="flex-1">
