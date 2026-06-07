@@ -8,9 +8,10 @@ export const runtime = "nodejs";
 const DESKTOP_PATH = path.join(os.homedir(), "Desktop");
 
 // Mac スクリーンショットのファイル名パターン
-// 例: "Screenshot 2024-01-15 at 12.34.56.png"
+// 英語: "Screenshot 2024-01-15 at 12.34.56.png" / "Screen Shot 2024-01-15 at 12.34.56 AM.png"
+// 日本語: "スクリーンショット 2024-01-15 23.01.46.png"
 const MAC_SCREENSHOT_REGEX =
-  /^Screenshot \d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}\.png$/i;
+  /^(Screen\s?shot \d{4}-\d{2}-\d{2} at \d{2}\.\d{2}\.\d{2}(\s?(AM|PM))?|スクリーンショット \d{4}-\d{2}-\d{2} \d{2}\.\d{2}\.\d{2})\.png$/i;
 
 export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();

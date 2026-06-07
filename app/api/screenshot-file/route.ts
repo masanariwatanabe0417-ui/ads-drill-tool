@@ -27,6 +27,14 @@ export async function GET(request: NextRequest) {
     const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
+    // 取り込み済みファイルをゴミ箱へ移動
+    const trashPath = path.join(os.homedir(), ".Trash", path.basename(resolvedPath));
+    try {
+      fs.renameSync(resolvedPath, trashPath);
+    } catch {
+      // ゴミ箱への移動に失敗しても取り込みは続行
+    }
+
     return NextResponse.json({ dataUrl, fileName: path.basename(resolvedPath) });
   } catch {
     return NextResponse.json({ error: "File not found" }, { status: 404 });

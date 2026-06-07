@@ -15,7 +15,12 @@
       "Bash(git add *)",
       "Bash(pkill -f \"next dev\")",
       "Bash(git commit -m ' *)",
-      "Bash(git push *)"
+      "Bash(git push *)",
+      "Bash(kill 14537)",
+      "Bash(curl -I https://drill.ma-ji.ai/)",
+      "Bash(ls ~/Desktop/ | grep -i \"screenshot\\\\|スクリーンショット\" | tail -5)",
+      "Bash(defaults read *)",
+      "Bash(ls ~/Desktop/ | grep -i \"screen\\\\|スクリーン\" | head -5)"
     ]
   }
 }
