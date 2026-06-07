@@ -1,49 +1,59 @@
-# 引き継ぎ：本気AIドリル（ads-drill-tool）セッション名：ドリル理解ツール7L
+# 引き継ぎ：本気AIドリル（ads-drill-tool）
 
 ## プロジェクト概要
 「本気AIドリル」の学習支援ツール。問題・解答・コースマップのスクリーンショットを貼り付けると Claude AI が自動解析して解説を生成する。
-作業ディレクトリ: /Users/a142270/Desktop/ads-drill-tool
-GitHubリポジトリ: https://github.com/masanariwatanabe0417-ui/ads-drill-tool
-最新コミット: 8cf08b6「iframeサイドパネル追加・エラーUI改善・自動取込連動」
+- **GitHubリポジトリ**: https://github.com/masanariwatanabe0417-ui/ads-drill-tool
+- **最新コミット**: 805642a「.envをgitignoreに追加」
 
 ## スタック
 - Next.js 14 (App Router) + TypeScript
 - Tailwind CSS + shadcn/ui
 - Anthropic SDK（claude-haiku-4-5）
-- 開発サーバー: npm run dev → http://localhost:3000
+- 開発サーバー: `npm run dev` → http://localhost:3000
+
+## 環境変数（新PCでは必須）
+`.env` はgitignoreされているため、新規クローン後に手動作成が必要：
+```
+ANTHROPIC_API_KEY=sk-ant-xxxxxxxx
+```
 
 ## 4ペイン構成
 NavigationPane(w-72) | ScreenshotPane(w-72) | TeacherPane(flex-1) | QuestionPane(w-80)
 
 ## 現在の動作（確認済み）
-- スロット1（問題）・スロット2（解答）・スロット3（コースマップ）の3枚貼り付けで自動解析
-- 3エージェント並列（すべてhaiku）で高速処理
-- 「ドリルを開く」ボタンを押すとサイドパネルが開き、drill.ma-ji.ai をiframe表示
-- サイドパネルを開くと同時に「自動取込」が自動でONになる
-- 自動取込：Desktopに保存されたスクリーンショットをSSEで検出し、コースマップ→問題→解答の順に自動取り込み
-- 解析エラー時は先生ペインにエラーメッセージを表示
-
-## 直近の未解決問題
-**自動取込が動かなかった原因（未修正）**
-ユーザーのMacでスクリーンショットがDesktopに保存されず、クリップボードにしか入っていなかった。
-→ まず macOS の設定を確認・修正してから動作テストをする
-
-**確認・修正手順：**
-1. ⌘+Shift+5 を押す
-2. 「オプション」→「保存先」が「デスクトップ」になっているか確認
-3. なっていなければ「デスクトップ」に変更
-4. ⌘+Shift+4 でスクリーンショットを撮り、自動取込されるかテスト
+- コースマップ→問題→解答の順に自動取込（日本語ファイル名対応済み）
+- Q1はコースマップ+問題+解答、Q2以降はコースマップ維持で問題+解答のみ
+- 「次の問題へ」ボタンで問題・解答スロットをクリア（コースマップは維持）
+- 解答スロットに画像がセットされると自動解析（「解析する」ボタンは廃止）
+- 取込済みスクリーンショットは `~/Desktop/AIドリル取込済み/YYYY-MM-DD/` へ移動
+- studyLogをJSONファイルに永続化（`~/Desktop/AIドリル取込済み/studyLog.json`）
+- ドリル本来のQ番号（Q1/10のQ1）をAIが抽出し、同じQ番号は上書き（重複なし）
+- レッスンはLesson番号順に自動ソート
 
 ## ファイル構成（主要）
-- components/DrillTool.tsx — 全状態管理（isAutoEnabled を含む）
-- components/DrillSidePanel.tsx — iframeサイドパネル
-- components/panes/ScreenshotPane.tsx — スクリーンショット貼り付けUI
-- components/panes/TeacherPane.tsx — AI解説表示（error propsあり）
-- app/api/watch-screenshots/route.ts — Desktop監視SSE（ファイル名正規表現修正済み）
-- app/api/teacher/route.ts — 3エージェント並列解析API
-- lib/hooks/useAutoScreenshot.ts — Desktop監視hook
+- `components/DrillTool.tsx` — 全状態管理・JSON読み書き
+- `components/DrillSidePanel.tsx` — iframeサイドパネル（drill.ma-ji.ai）
+- `components/panes/ScreenshotPane.tsx` — スクリーンショット貼り付けUI
+- `components/panes/TeacherPane.tsx` — AI解説表示
+- `app/api/teacher/route.ts` — 3エージェント並列解析API
+- `app/api/study-log/route.ts` — studyLog JSON永続化API（GET/POST）
+- `app/api/screenshot-file/route.ts` — ファイル読み込み＋取込済みフォルダ移動
+- `app/api/watch-screenshots/route.ts` — Desktop監視SSE
+- `lib/hooks/useAutoScreenshot.ts` — Desktop監視hook
+- `lib/types.ts` — 型定義
 
-## 次にやること（優先順）
-1. ⌘+Shift+5でMac保存先をDesktopに直し、自動取込の動作確認
-2. 先生ペインの文章が入りきっていない可能性あり → レイアウト確認・修正
-3. （任意）ストリーミング対応で解説表示をさらに速く
+## 次にやること（候補）
+1. 実験中のデータ（バラバラQ）をリセットして順番通りやり直す手段の検討
+2. 先生ペインの解説文レイアウト確認（文章が見切れる場合）
+3. ストリーミング対応（解説表示を逐次的に）
+4. studyLogのエクスポート・バックアップ機能
+
+## 新PCでの始め方
+```bash
+git clone https://github.com/masanariwatanabe0417-ui/ads-drill-tool.git
+cd ads-drill-tool
+npm install
+# .env ファイルを作成して ANTHROPIC_API_KEY を設定
+npm run dev
+```
+※ studyLog.json はローカルPC固有のため、各PCで独立して蓄積される

@@ -20,7 +20,10 @@
       "Bash(curl -I https://drill.ma-ji.ai/)",
       "Bash(ls ~/Desktop/ | grep -i \"screenshot\\\\|スクリーンショット\" | tail -5)",
       "Bash(defaults read *)",
-      "Bash(ls ~/Desktop/ | grep -i \"screen\\\\|スクリーン\" | head -5)"
+      "Bash(ls ~/Desktop/ | grep -i \"screen\\\\|スクリーン\" | head -5)",
+      "Bash(git filter-branch *)",
+      "Bash(git stash *)",
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --index-filter 'git rm --cached --ignore-unmatch .env' --prune-empty -- --all)"
     ]
   }
 }
