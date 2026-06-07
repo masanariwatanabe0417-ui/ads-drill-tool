@@ -54,3 +54,24 @@ ANTHROPIC_API_KEY=...
 ## 現状の制約
 - `studyLog` はセッション中のみ（ページリロードでリセット）
 - 画像は base64 でそのまま API に送信（大きいスクリーンショットは注意）
+
+## ⚠️ セキュリティ・運用の鉄則（過去にトラブルあり。必ず守る）
+
+### APIキーの扱い
+- **APIキー等の秘密情報は `.env.local` だけに置く**（`.gitignore`済み。Next.jsで `.env` より優先）。
+- **`.md`・コード・コミットメッセージ・引き継ぎメモにキーを絶対に書かない。**
+  - 過去に `NEXT_SESSION.md` にキーを貼り、**public リポジトリへ漏洩**した（2026-06-08）。
+  - 引き継ぎでは「キーは各自 console.anthropic.com で確認」と書くだけにする。
+- gitリモートURLに PAT（`ghp_...`）を埋め込まない。`gh auth login` を使う。
+
+### APIキーの差し替え（無停止手順・順番厳守）
+ツールは `new Anthropic()` で `process.env.ANTHROPIC_API_KEY` を読む。Revokeを先にやると即停止する。
+1. console.anthropic.com で**新キーを発行**（まだ旧キーをRevokeしない）。
+2. `bash set-api-key.sh <新キー>` → キーを検証してから `.env.local` に書き込む（不正なら無変更）。
+3. `npm run dev` を再起動して動作確認。
+4. 確認できたら**最後に**旧キーをRevoke。
+
+### フォルダ・git運用
+- PC間共有は **GitHubのpull/push** が正道。**iCloudで `.git` を同期しない**（競合コピーで壊れる）。
+- 作業フォルダの中で再 `git clone` しない（履歴の異なる重複リポジトリができる）。1台＝1作業フォルダ。
+- 「最新か」はファイル同期でなく `git merge-base --is-ancestor HEAD origin/main` 等のgit履歴で判定する。

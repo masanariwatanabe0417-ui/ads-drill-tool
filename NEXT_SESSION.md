@@ -12,12 +12,14 @@
 - 開発サーバー: `npm run dev` → http://localhost:3000
 
 ## 環境変数（各PCで必須・gitignoreのため手動作成）
-APIキー: `sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA`
+⚠️ APIキーは **このメモやコードに絶対に貼らない**（過去にpublic repoへ漏洩した）。
+キーは console.anthropic.com で各自発行・確認し、`.env.local` にだけ設定する。
 
-作成コマンド：
+作成コマンド（キーは自分のものに置き換え）：
 ```bash
-echo 'ANTHROPIC_API_KEY=sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA' > .env
+echo 'ANTHROPIC_API_KEY=sk-ant-api03-（自分のキー）' > .env.local
 ```
+※ キーの差し替えは `bash set-api-key.sh <新キー>`（API検証してから書き込むので無停止）
 
 ## 4ペイン構成
 NavigationPane(w-72) | ScreenshotPane(w-72) | TeacherPane(flex-1) | QuestionPane(w-80)
@@ -71,7 +73,7 @@ npm run dev
 git clone https://github.com/masanariwatanabe0417-ui/ads-drill-tool.git
 cd ads-drill-tool
 npm install
-echo 'ANTHROPIC_API_KEY=sk-ant-api03-2onCxtguFe1gPpwo5MbL-GGuL8wgruiePTUyvjK9KhKfbjyPKH13Cu5a5A9NgTDgCPzr5i_m32bRF9aLd_NTb-A-GM-yKQAA' > .env
+echo 'ANTHROPIC_API_KEY=sk-ant-api03-（自分のキー）' > .env.local
 npm run dev
 ```
 
