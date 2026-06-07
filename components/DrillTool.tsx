@@ -47,6 +47,13 @@ function addToStudyLog(
     lessonIdx = course.lessons.length - 1;
   }
 
+  // レッスンを Lesson 番号順にソート
+  course.lessons.sort((a, b) => {
+    const n = (s: string) => parseInt(s.match(/Lesson\s*(\d+)/i)?.[1] ?? "9999", 10);
+    return n(a.lessonName) - n(b.lessonName);
+  });
+  lessonIdx = course.lessons.findIndex((l) => l.lessonName === lessonInfo.lesson);
+
   const lesson = { ...course.lessons[lessonIdx], questions: [...course.lessons[lessonIdx].questions] };
   const entry = { questionInfo, keyLearning, explanation, timestamp: Date.now() };
   const existingIdx = lesson.questions.findIndex((q) => q.questionInfo === questionInfo);
