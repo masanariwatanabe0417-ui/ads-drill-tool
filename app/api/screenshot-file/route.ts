@@ -43,14 +43,13 @@ export async function GET(request: NextRequest) {
     const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
-    // 取り込み済みファイルを ~/Desktop/AIドリル取込済み/YYYY-MM-DD/ へ移動し、
+    // 取り込み済みファイルを ~/Desktop/AIドリル取込済み/ へ移動し、
     // 「役割_日時.png」へ改名（案A）。役割不明時は元の名前のまま。
-    // movedPath は案B（解説生成後のLesson名・Q番号付与）で再改名するため返す。
+    // movedPath は案B/C（解説生成後のコース・Lesson名・Q番号付与）で再改名するため返す。
     let movedName = path.basename(resolvedPath);
     let movedPath: string | null = null;
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const destDir = path.join(os.homedir(), "Desktop", "AIドリル取込済み", today);
+      const destDir = path.join(os.homedir(), "Desktop", "AIドリル取込済み");
       fs.mkdirSync(destDir, { recursive: true });
 
       const label = slot ? SLOT_LABELS[slot] : undefined;

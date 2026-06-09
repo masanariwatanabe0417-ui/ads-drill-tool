@@ -171,6 +171,7 @@ export default function DrillTool() {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 files: filesToRename,
+                course: info.course,
                 lesson: info.lesson,
                 questionInfo: assignedQuestionInfo,
               }),

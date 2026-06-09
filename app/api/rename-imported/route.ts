@@ -29,16 +29,19 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json()) as {
       files?: Partial<Record<string, string>>; // { courseMap?, question?, answer? }
+      course?: string;
       lesson?: string;
       questionInfo?: string;
     };
-    const { files, lesson, questionInfo } = body;
+    const { files, course, lesson, questionInfo } = body;
     if (!files || !lesson || !questionInfo) {
       return NextResponse.json({ error: "files/lesson/questionInfo required" }, { status: 400 });
     }
 
+    const coursePart = course ? sanitize(course) : "";
     const lessonPart = sanitize(lesson);
     const qPart = sanitize(questionInfo);
+    const prefix = coursePart ? `${coursePart}_` : "";
     const renamed: Record<string, string> = {};
 
     for (const [slot, filePath] of Object.entries(files)) {
@@ -54,11 +57,11 @@ export async function POST(request: NextRequest) {
       const dir = path.dirname(resolved);
       const ext = path.extname(resolved) || ".png";
 
-      // Lesson_タイトル_Q_役割.png（同名は連番）
-      let candidate = `${lessonPart}_${qPart}_${label}${ext}`;
+      // コース_Lesson_タイトル_Q_役割.png（同名は連番）
+      let candidate = `${prefix}${lessonPart}_${qPart}_${label}${ext}`;
       let dest = path.join(dir, candidate);
       for (let i = 2; fs.existsSync(dest) && dest !== resolved; i++) {
-        candidate = `${lessonPart}_${qPart}_${label}_${i}${ext}`;
+        candidate = `${prefix}${lessonPart}_${qPart}_${label}_${i}${ext}`;
         dest = path.join(dir, candidate);
       }
       if (dest !== resolved) {
