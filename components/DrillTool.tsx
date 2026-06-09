@@ -95,6 +95,95 @@ export default function DrillTool() {
   const [teacherError, setTeacherError] = useState<string | null>(null);
   const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
+  const [deletedGlossaryTerms, setDeletedGlossaryTerms] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem("deletedGlossaryTerms");
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  const handleDeleteGlossaryTerm = useCallback((term: string) => {
+    setDeletedGlossaryTerms((prev) => {
+      const next = [...prev, term];
+      try { localStorage.setItem("deletedGlossaryTerms", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // 単語帳 Q&A モード
+  const [glossaryFocusTerm, setGlossaryFocusTerm] = useState<string | null>(null);
+  const [glossaryQaEntries, setGlossaryQaEntries] = useState<QAEntry[]>([]);
+  const [glossaryQaLoading, setGlossaryQaLoading] = useState(false);
+
+  const handleFocusGlossaryTerm = useCallback((term: string) => {
+    setGlossaryFocusTerm(term);
+    setGlossaryQaEntries([]);
+  }, []);
+
+  const handleGlossaryQuestion = useCallback(async (question: string) => {
+    if (!glossaryFocusTerm) return;
+    setGlossaryQaLoading(true);
+    // 現在の定義：手動追加 > override > なし
+    const currentDef =
+      studyLog.glossaryManualTerms?.[glossaryFocusTerm] ??
+      studyLog.glossaryOverrides?.[glossaryFocusTerm.toLowerCase()] ??
+      "";
+    try {
+      const res = await fetch("/api/question", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, glossaryTerm: glossaryFocusTerm, currentDefinition: currentDef }),
+      });
+      const data = await res.json();
+      const entry: QAEntry = {
+        id: crypto.randomUUID(),
+        question,
+        answer: data.answer ?? "",
+        proposedAddition: "",
+        proposedDefinition: data.proposedDefinition ?? "",
+        newTermSuggestions: data.newTerms ?? [],
+        approvedNewTerms: [],
+        approved: false,
+      };
+      setGlossaryQaEntries((prev) => [...prev, entry]);
+    } finally {
+      setGlossaryQaLoading(false);
+    }
+  }, [glossaryFocusTerm, studyLog.glossaryOverrides, studyLog.glossaryManualTerms]);
+
+  const handleSaveGlossaryDefinition = useCallback((term: string, definition: string) => {
+    setStudyLog((prev) => ({
+      ...prev,
+      glossaryOverrides: {
+        ...prev.glossaryOverrides,
+        [term.toLowerCase()]: definition,
+      },
+    }));
+    setGlossaryQaEntries((prev) =>
+      prev.map((e) =>
+        e.proposedDefinition === definition ? { ...e, approved: true } : e
+      )
+    );
+  }, []);
+
+  const handleAddNewGlossaryTerm = useCallback((entryId: string, term: string, definition: string) => {
+    setStudyLog((prev) => ({
+      ...prev,
+      glossaryManualTerms: {
+        ...prev.glossaryManualTerms,
+        [term]: definition,
+      },
+    }));
+    setGlossaryQaEntries((prev) =>
+      prev.map((e) =>
+        e.id === entryId
+          ? { ...e, approvedNewTerms: [...(e.approvedNewTerms ?? []), term] }
+          : e
+      )
+    );
+  }, []);
+
   // 自動取込で読み取った Desktop 上の元ファイルパス。
   // 解説生成が成功した（＝ドリルと確定した）時だけ取込フォルダへ移動・改名する。
   const [importedFiles, setImportedFiles] = useState<Partial<Record<ScreenshotSlot, string>>>({});
@@ -340,6 +429,10 @@ export default function DrillTool() {
           currentLessonInfo={currentLessonInfo}
           hasScreenshots={!!screenshots.questionImage}
           onSelectView={setTeacherView}
+          deletedGlossaryTerms={deletedGlossaryTerms}
+          onDeleteGlossaryTerm={handleDeleteGlossaryTerm}
+          glossaryFocusTerm={glossaryFocusTerm}
+          onFocusGlossaryTerm={handleFocusGlossaryTerm}
         />
       </div>
       <div className="w-80 shrink-0">
@@ -349,6 +442,13 @@ export default function DrillTool() {
           hasLesson={!!screenshots.questionImage}
           onAskQuestion={handleAskQuestion}
           onApproveAddition={handleApproveAddition}
+          glossaryFocusTerm={glossaryFocusTerm}
+          glossaryQaEntries={glossaryQaEntries}
+          glossaryQaLoading={glossaryQaLoading}
+          onAskGlossaryQuestion={handleGlossaryQuestion}
+          onSaveGlossaryDefinition={handleSaveGlossaryDefinition}
+          onAddNewGlossaryTerm={handleAddNewGlossaryTerm}
+          onClearGlossaryFocus={() => setGlossaryFocusTerm(null)}
         />
       </div>
     </div>

@@ -11,6 +11,9 @@ export interface QAEntry {
   question: string;
   answer: string;
   proposedAddition: string;
+  proposedDefinition?: string;        // 単語帳モード時の提案定義
+  newTermSuggestions?: NewTermSuggestion[]; // 回答中に出てきた新規登録候補用語
+  approvedNewTerms?: string[];        // 登録済み新規用語のterm一覧
   approved: boolean;
 }
 
@@ -42,6 +45,13 @@ export interface CourseData {
 
 export interface StudyLog {
   courses: CourseData[];
+  glossaryOverrides?: Record<string, string>;    // term.toLowerCase() → カスタム定義文
+  glossaryManualTerms?: Record<string, string>;  // 表示用term → 定義（手動追加用語）
+}
+
+export interface NewTermSuggestion {
+  term: string;
+  definition: string;
 }
 
 // 先生ペインの表示モード

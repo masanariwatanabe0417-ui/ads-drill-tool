@@ -1,12 +1,13 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
-import { buildGlossary } from "@/lib/glossary";
+import { buildGlossary, GlossaryTerm } from "@/lib/glossary";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
+import { useEffect, useRef, useState } from "react";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -16,6 +17,10 @@ interface TeacherPaneProps {
   currentLessonInfo: ExtractedLessonInfo | null;
   error?: string | null;
   onSelectView: (view: TeacherView) => void;
+  deletedGlossaryTerms?: string[];
+  onDeleteGlossaryTerm?: (term: string) => void;
+  glossaryFocusTerm?: string | null;
+  onFocusGlossaryTerm?: (term: string) => void;
 }
 
 const markdownComponents: Components = {
@@ -156,15 +161,147 @@ function StepGuide() {
   );
 }
 
+// ── 定義統合キャッシュ（localStorage） ───────────────────────────────
+const CACHE_PREFIX = "glossary-consolidated:";
+
+function cacheKey(term: string, defs: string[]): string {
+  return CACHE_PREFIX + term.toLowerCase() + ":" + defs.join("|").length;
+}
+
+function loadCached(term: string, defs: string[]): string | null {
+  try {
+    const raw = localStorage.getItem(cacheKey(term, defs));
+    if (!raw) return null;
+    const { defsHash, consolidated } = JSON.parse(raw);
+    return defsHash === defs.join("|") ? consolidated : null;
+  } catch { return null; }
+}
+
+function saveCache(term: string, defs: string[], consolidated: string) {
+  try {
+    localStorage.setItem(
+      cacheKey(term, defs),
+      JSON.stringify({ defsHash: defs.join("|"), consolidated })
+    );
+  } catch {}
+}
+
+// ── 単語カード（統合ロジック付き） ──────────────────────────────────
+function GlossaryCard({
+  term,
+  onSelectView,
+  onDeleteTerm,
+  onFocusTerm,
+  isFocused,
+}: {
+  term: GlossaryTerm;
+  onSelectView: (view: TeacherView) => void;
+  onDeleteTerm: (term: string) => void;
+  onFocusTerm: (term: string) => void;
+  isFocused: boolean;
+}) {
+  const [consolidated, setConsolidated] = useState<string | null>(() =>
+    term.definitions.length >= 2 ? loadCached(term.term, term.definitions) : null
+  );
+  const [consolidating, setConsolidating] = useState(false);
+  const didRun = useRef(false);
+
+  useEffect(() => {
+    if (term.definitions.length < 2) return;
+    if (consolidated !== null) return;
+    if (didRun.current) return;
+    didRun.current = true;
+
+    setConsolidating(true);
+    fetch("/api/glossary-consolidate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ term: term.term, definitions: term.definitions }),
+    })
+      .then((r) => r.json())
+      .then(({ consolidated: c }) => {
+        if (c) {
+          saveCache(term.term, term.definitions, c);
+          setConsolidated(c);
+        }
+      })
+      .finally(() => setConsolidating(false));
+  }, [term, consolidated]);
+
+  const displayDefs =
+    term.definitions.length >= 2
+      ? consolidated !== null
+        ? [consolidated]
+        : term.definitions
+      : term.definitions;
+
+  return (
+    <div className={`border rounded-lg p-3 space-y-1.5 relative group ${isFocused ? "border-violet-400 bg-violet-50/40" : ""}`}>
+      <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <button
+          onClick={() => onFocusTerm(term.term)}
+          className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-violet-600"
+          title="質問ペインで質問する"
+        >
+          <PenLine className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={() => onDeleteTerm(term.term)}
+          className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
+          title="この用語を非表示"
+        >
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <div className="flex items-center gap-1.5 pr-12">
+        <p className="text-sm font-bold text-primary">{term.term}</p>
+        {consolidating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />}
+      </div>
+      {displayDefs.map((d, i) => (
+        <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
+      ))}
+      <div className="flex flex-wrap gap-1 pt-1">
+        {term.occurrences.map((o) => (
+          <button
+            key={`${o.courseKey}__${o.lessonName}__${o.questionInfo}`}
+            onClick={() =>
+              onSelectView({
+                type: "question",
+                courseKey: o.courseKey,
+                lessonName: o.lessonName,
+                questionInfo: o.questionInfo,
+              })
+            }
+            className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 transition-colors"
+            title={`${o.courseName} ／ ${o.lessonName}`}
+          >
+            {o.lessonName} {o.questionInfo}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── 単語帳ビュー ────────────────────────────────────────────────────
 function GlossaryView({
   studyLog,
   onSelectView,
+  deletedTerms,
+  onDeleteTerm,
+  focusTerm,
+  onFocusTerm,
 }: {
   studyLog: StudyLog;
   onSelectView: (view: TeacherView) => void;
+  deletedTerms: string[];
+  onDeleteTerm: (term: string) => void;
+  focusTerm: string | null;
+  onFocusTerm: (term: string) => void;
 }) {
-  const terms = buildGlossary(studyLog);
+  const allTerms = buildGlossary(studyLog);
+  const deletedSet = new Set(deletedTerms.map((t) => t.toLowerCase()));
+  const terms = allTerms.filter((t) => !deletedSet.has(t.term.toLowerCase()));
 
   if (terms.length === 0) {
     return (
@@ -184,31 +321,14 @@ function GlossaryView({
       </div>
       <div className="space-y-3">
         {terms.map((t) => (
-          <div key={t.term} className="border rounded-lg p-3 space-y-1.5">
-            <p className="text-sm font-bold text-primary">{t.term}</p>
-            {t.definitions.map((d, i) => (
-              <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
-            ))}
-            <div className="flex flex-wrap gap-1 pt-1">
-              {t.occurrences.map((o) => (
-                <button
-                  key={`${o.courseKey}__${o.lessonName}__${o.questionInfo}`}
-                  onClick={() =>
-                    onSelectView({
-                      type: "question",
-                      courseKey: o.courseKey,
-                      lessonName: o.lessonName,
-                      questionInfo: o.questionInfo,
-                    })
-                  }
-                  className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 transition-colors"
-                  title={`${o.courseName} ／ ${o.lessonName}`}
-                >
-                  {o.lessonName} {o.questionInfo}
-                </button>
-              ))}
-            </div>
-          </div>
+          <GlossaryCard
+            key={t.term}
+            term={t}
+            onSelectView={onSelectView}
+            onDeleteTerm={onDeleteTerm}
+            onFocusTerm={onFocusTerm}
+            isFocused={focusTerm?.toLowerCase() === t.term.toLowerCase()}
+          />
         ))}
       </div>
     </div>
@@ -219,12 +339,25 @@ function GlossaryView({
 function renderContent(
   studyLog: StudyLog,
   teacherView: TeacherView,
-  onSelectView: (view: TeacherView) => void
+  onSelectView: (view: TeacherView) => void,
+  deletedGlossaryTerms: string[],
+  onDeleteGlossaryTerm: (term: string) => void,
+  glossaryFocusTerm: string | null,
+  onFocusGlossaryTerm: (term: string) => void
 ): React.ReactNode {
   if (!teacherView) return null;
 
   if (teacherView.type === "glossary") {
-    return <GlossaryView studyLog={studyLog} onSelectView={onSelectView} />;
+    return (
+      <GlossaryView
+        studyLog={studyLog}
+        onSelectView={onSelectView}
+        deletedTerms={deletedGlossaryTerms}
+        onDeleteTerm={onDeleteGlossaryTerm}
+        focusTerm={glossaryFocusTerm}
+        onFocusTerm={onFocusGlossaryTerm}
+      />
+    );
   }
 
   if (teacherView.type === "question") {
@@ -305,6 +438,10 @@ export default function TeacherPane({
   currentLessonInfo,
   error,
   onSelectView,
+  deletedGlossaryTerms = [],
+  onDeleteGlossaryTerm = () => {},
+  glossaryFocusTerm = null,
+  onFocusGlossaryTerm = () => {},
 }: TeacherPaneProps) {
   const viewLabel =
     teacherView?.type === "course"
@@ -350,7 +487,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

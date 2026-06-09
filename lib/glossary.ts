@@ -24,7 +24,6 @@ function parseGlossaryLines(explanation: string): { term: string; definition: st
   for (const line of lines) {
     const heading = line.match(/^\s*#{2,3}\s*(.+?)\s*$/);
     if (heading) {
-      // 「用語解説」を含む見出しでセクション開始、それ以外の見出しで終了
       inSection = /用語/.test(heading[1]);
       continue;
     }
@@ -40,7 +39,35 @@ function parseGlossaryLines(explanation: string): { term: string; definition: st
   return result;
 }
 
+// ひらがな→カタカナ正規化（ソート・重複判定で使用）
+function toKatakana(s: string): string {
+  return s.replace(/[ぁ-ゖ]/g, (c) =>
+    String.fromCharCode(c.charCodeAt(0) + 0x60)
+  );
+}
+
+// 用語の「読みキー」を返す。
+// - 英字主体 + 括弧内ふりがな → 括弧内を読みにする (例: "conflict(コンフリクト)" → "コンフリクト")
+// - それ以外 → 括弧前の本体 (例: "マージ(merge)" → "マージ")
+// - 括弧なし → そのまま
+function readingKey(term: string): string {
+  const m = term.match(/^\s*([^(（]+?)\s*[(（]([^)）]*)[)）]/);
+  if (m) {
+    const head = m[1].trim();
+    const inside = m[2].trim();
+    if (/^[A-Za-z0-9.\-\s]+$/.test(head) && inside) return toKatakana(inside);
+    return toKatakana(head);
+  }
+  return toKatakana(term.trim());
+}
+
+// 重複判定キー: 読みキーを小文字化して統一（"マージ" と "マージ(merge)" を同一視）
+function dedupeKey(term: string): string {
+  return readingKey(term).toLowerCase();
+}
+
 // studyLog 全体を走査して用語ごとに集約した単語帳を作る（追加API不要）。
+// glossaryOverrides に登録された用語はその定義を優先する（AI統合・複数定義を上書き）。
 export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
   const map = new Map<string, GlossaryTerm>();
 
@@ -48,11 +75,14 @@ export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
     for (const lesson of course.lessons) {
       for (const q of lesson.questions) {
         for (const { term, definition } of parseGlossaryLines(q.explanation)) {
-          const key = term.toLowerCase();
+          const key = dedupeKey(term);
           let entry = map.get(key);
           if (!entry) {
             entry = { term, definitions: [], occurrences: [] };
             map.set(key, entry);
+          } else {
+            // 括弧付き（より情報量の多い）表記を優先して表示用 term に採用
+            if (term.length > entry.term.length) entry.term = term;
           }
           if (definition && !entry.definitions.includes(definition)) {
             entry.definitions.push(definition);
@@ -75,21 +105,27 @@ export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
     }
   }
 
-  // あいうえお順にソート。
-  // 用語が英語表記（例 "conflict(コンフリクト)"）の場合は、括弧内の
-  // 振り仮名（コンフリクト）を読みキーにする。日本語表記（例 "マージ(merge)"）は
-  // そのまま用語本体を読みキーにする。
-  const readingKey = (term: string) => {
-    const m = term.match(/^\s*([^(（]+?)\s*[(（]([^)）]*)[)）]/);
-    if (m) {
-      const head = m[1].trim();
-      const inside = m[2].trim();
-      // 用語本体が英字主体なら振り仮名（括弧内）を読みにする
-      if (/^[A-Za-z0-9.\-\s]+$/.test(head) && inside) return inside;
-      return head;
+  // glossaryOverrides が登録されている用語は定義を上書きする
+  // キーは entry.term.toLowerCase() で照合（dedupeKey とは別）
+  const overrides = studyLog.glossaryOverrides ?? {};
+  map.forEach((entry) => {
+    const override = overrides[entry.term.toLowerCase()];
+    if (override) entry.definitions = [override];
+  });
+
+  // 手動追加用語（説明文に登場しないが単語帳に追加されたもの）を補完する
+  const manualTerms = studyLog.glossaryManualTerms ?? {};
+  Object.entries(manualTerms).forEach(([term, definition]) => {
+    const key = dedupeKey(term);
+    if (!map.has(key)) {
+      map.set(key, { term, definitions: [definition], occurrences: [] });
+    } else {
+      // 既存エントリがあればオーバーライドとして定義を上書き
+      map.get(key)!.definitions = [definition];
     }
-    return term.trim();
-  };
+  });
+
+  // ひらがな・カタカナを同一視したあいうえお順でソート
   return Array.from(map.values()).sort((a, b) =>
     readingKey(a.term).localeCompare(readingKey(b.term), "ja")
   );
