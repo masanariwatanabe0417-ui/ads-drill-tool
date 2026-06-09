@@ -4,7 +4,7 @@
     {
       "name": "ads-drill-tool",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": ["--prefix", "ads-drill-tool", "run", "dev"],
       "port": 3000
     }
   ]

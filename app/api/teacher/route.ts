@@ -90,11 +90,11 @@ async function generateGlossary(imageBlocks: ImageBlock[]) {
   return message.content.length > 0 && message.content[0].type === "text" ? message.content[0].text.trim() : "## 用語解説\n（用語解説を生成できませんでした）";
 }
 
-// Agent③: 解説・keyLearning・覚えるべきポイントを生成（opus - 高品質）
+// Agent③: 解説・keyLearning・覚えるべきポイントを生成（haiku - 高品質）
 async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean) {
   const message = await client.messages.create({
     model: "claude-haiku-4-5",
-    max_tokens: 1024,
+    max_tokens: 1500,
     messages: [
       {
         role: "user",
@@ -106,14 +106,15 @@ async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean
 このスクリーンショットは「本気AIドリル」の問題${hasAnswer ? "と解答" : ""}です。
 
 重要ルール：
-- 入社したての社員に教える先輩社員として、分かりやすく簡潔に説明してください
-- 英語・コード用語が出てきたら必ず直後にカタカナを括弧で補足してください（例：branch(ブランチ)、feature(フィーチャー)）
-- コードが出てきたら各要素の意味を説明してください
+- ドリルの原文をそのまま使わず、自分の言葉で噛み砕いて説明してください
+- 英語・コード用語が出てきたら必ず直後にカタカナを括弧で補足してください（例：branch(ブランチ)）
+- 問題と正解を一体で説明し「なぜその答えなのか」を中心に解説してください
+- 間違い選択肢は1つずつ「どこが違うのか」を具体的に説明してください
 
 以下のJSON形式のみで返してください（他のテキストは含めない）：
 {
-  "keyLearning": "この問題で学ぶ核心を1〜2文で（英語用語にはカタカナを括弧で補足）",
-  "mainContent": "## このドリルで学ぶこと\\n（1〜2文）\\n\\n## 解説\\n（入社したての社員に教える先輩のように。英語はカタカナ付き。コードが出たら各要素の意味を説明）\\n\\n## 覚えるべきポイント\\n（重要ポイント1〜3点）"
+  "keyLearning": "この問題で学ぶ核心を1〜2文で（自分の言葉で、英語用語にはカタカナを括弧で補足）",
+  "mainContent": "## 問題\\n（ドリルの問題文を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜3文で）\\n\\n## 正解\\n（正解の選択肢を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜2文で）\\n\\n## なぜこれが正解？\\n（問題と正解をセットで、「〜だから正解は◯」のように理由から説明。ドリル原文をそのまま使わず自分の言葉で）\\n\\n## 間違い選択肢のどこが違う？\\n（各選択肢ごとに「選択肢X：〜だからNG」と1〜2文で説明）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）"
 }`,
           },
         ],
