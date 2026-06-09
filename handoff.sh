@@ -55,8 +55,10 @@ $NEXT_TASKS
 EOF
 )
 
+echo "$NOTE" > "$REPO_DIR/NEXT_SESSION.md"
 echo "$NOTE" | pbcopy
-echo "✅ クリップボードにコピーしました"
+echo "✅ NEXT_SESSION.md に保存しました（新セッションが自動で読み込みます）"
+echo "✅ クリップボードにもコピーしました"
 echo ""
 echo "---"
 echo "$NOTE"
