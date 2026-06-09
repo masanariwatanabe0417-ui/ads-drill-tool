@@ -95,7 +95,8 @@ export default function DrillTool() {
   const [teacherError, setTeacherError] = useState<string | null>(null);
   const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
-  // 案B: 自動取込で移動済みファイルの絶対パス（解説生成後にLesson名・Q番号で改名）
+  // 自動取込で読み取った Desktop 上の元ファイルパス。
+  // 解説生成が成功した（＝ドリルと確定した）時だけ取込フォルダへ移動・改名する。
   const [importedFiles, setImportedFiles] = useState<Partial<Record<ScreenshotSlot, string>>>({});
   const importedFilesRef = useRef(importedFiles);
   importedFilesRef.current = importedFiles;
@@ -163,7 +164,7 @@ export default function DrillTool() {
             lessonName: info.lesson,
             questionInfo: assignedQuestionInfo,
           });
-          // 案B: 取り込んだファイルを「Lesson_タイトル_Q_役割」に改名
+          // 解説生成成功＝ドリルと確定。Desktop の元ファイルを取込フォルダへ移動＋改名
           const filesToRename = importedFilesRef.current;
           if (Object.keys(filesToRename).length > 0) {
             fetch("/api/rename-imported", {
@@ -195,10 +196,10 @@ export default function DrillTool() {
     : "courseMapImage";
 
   const handleScreenshotUpload = useCallback(
-    (type: ScreenshotSlot, dataUrl: string, movedPath?: string | null) => {
+    (type: ScreenshotSlot, dataUrl: string, sourcePath?: string | null) => {
       setScreenshots((prev) => ({ ...prev, [slotKey(type)]: dataUrl }));
-      if (movedPath) {
-        setImportedFiles((prev) => ({ ...prev, [type]: movedPath }));
+      if (sourcePath) {
+        setImportedFiles((prev) => ({ ...prev, [type]: sourcePath }));
       }
       setQaEntries([]);
     },

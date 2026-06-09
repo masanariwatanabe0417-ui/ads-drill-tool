@@ -21,7 +21,7 @@ interface ScreenshotPaneProps {
   onScreenshotUpload: (
     type: ScreenshotSlot,
     dataUrl: string,
-    movedPath?: string | null
+    sourcePath?: string | null
   ) => void;
   onScreenshotClear: (type: ScreenshotSlot) => void;
   onNextQuestion: () => void;

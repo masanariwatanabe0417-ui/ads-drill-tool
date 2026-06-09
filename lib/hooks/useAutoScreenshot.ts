@@ -7,7 +7,7 @@ interface UseAutoScreenshotOptions {
   onScreenshotUpload: (
     type: ScreenshotSlot,
     dataUrl: string,
-    movedPath?: string | null
+    sourcePath?: string | null
   ) => void;
 }
 
@@ -56,15 +56,17 @@ export function useAutoScreenshot({
 
         // ファイルを base64 で取得（役割を渡し、取込済みフォルダで「役割_日時」に改名させる）
         const res = await fetch(
-          `/api/screenshot-file?path=${encodeURIComponent(filePath)}&slot=${slot}`
+          `/api/screenshot-file?path=${encodeURIComponent(filePath)}`
         );
         if (!res.ok) return;
-        const { dataUrl, movedPath } = (await res.json()) as {
+        // sourcePath は Desktop 上の元ファイルパス。解説生成成功後に
+        // /api/rename-imported が取込フォルダへ移動・改名する（無関係スクショは移動しない）。
+        const { dataUrl, sourcePath } = (await res.json()) as {
           dataUrl: string;
-          movedPath?: string | null;
+          sourcePath?: string | null;
         };
 
-        upload(slot, dataUrl, movedPath ?? null);
+        upload(slot, dataUrl, sourcePath ?? null);
       } catch {
         // ping メッセージなど JSON でないイベントは無視
       }

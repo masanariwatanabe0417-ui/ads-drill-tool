@@ -7,24 +7,8 @@ export const runtime = "nodejs";
 
 const DESKTOP_PATH = path.join(os.homedir(), "Desktop");
 
-// 役割（スロット）→ 日本語ラベル
-const SLOT_LABELS: Record<string, string> = {
-  courseMap: "コースマップ",
-  question: "問題",
-  answer: "解答",
-};
-
-// ローカル時刻で YYYYMMDD-HHMMSS
-function localStamp(d = new Date()): string {
-  const p = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(
-    d.getHours()
-  )}${p(d.getMinutes())}${p(d.getSeconds())}`;
-}
-
 export async function GET(request: NextRequest) {
   const filePath = request.nextUrl.searchParams.get("path");
-  const slot = request.nextUrl.searchParams.get("slot"); // courseMap|question|answer
 
   if (!filePath) {
     return NextResponse.json({ error: "path is required" }, { status: 400 });
@@ -43,38 +27,14 @@ export async function GET(request: NextRequest) {
     const mimeType = ext === ".png" ? "image/png" : "image/jpeg";
     const dataUrl = `data:${mimeType};base64,${base64}`;
 
-    // 取り込み済みファイルを ~/Desktop/AIドリル取込済み/ へ移動し、
-    // 「役割_日時.png」へ改名（案A）。役割不明時は元の名前のまま。
-    // movedPath は案B/C（解説生成後のコース・Lesson名・Q番号付与）で再改名するため返す。
-    let movedName = path.basename(resolvedPath);
-    let movedPath: string | null = null;
-    try {
-      const destDir = path.join(os.homedir(), "Desktop", "AIドリル取込済み");
-      fs.mkdirSync(destDir, { recursive: true });
-
-      const label = slot ? SLOT_LABELS[slot] : undefined;
-      if (label) {
-        const stamp = localStamp();
-        // 同名衝突を避けて連番付与
-        let candidate = `${label}_${stamp}${ext}`;
-        let dest = path.join(destDir, candidate);
-        for (let i = 2; fs.existsSync(dest); i++) {
-          candidate = `${label}_${stamp}_${i}${ext}`;
-          dest = path.join(destDir, candidate);
-        }
-        fs.renameSync(resolvedPath, dest);
-        movedName = candidate;
-        movedPath = dest;
-      } else {
-        const dest = path.join(destDir, movedName);
-        fs.renameSync(resolvedPath, dest);
-        movedPath = dest;
-      }
-    } catch {
-      // 移動に失敗しても取り込みは続行
-    }
-
-    return NextResponse.json({ dataUrl, fileName: movedName, movedPath });
+    // ⚠️ ここではファイルを移動しない（読み取るだけ）。
+    // ドリルと確定する前に移動すると、無関係なスクショまで取込フォルダに入ってしまうため。
+    // 実際の移動・改名は解説生成成功後の /api/rename-imported で行う（sourcePath を渡す）。
+    return NextResponse.json({
+      dataUrl,
+      fileName: path.basename(resolvedPath),
+      sourcePath: resolvedPath,
+    });
   } catch {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }

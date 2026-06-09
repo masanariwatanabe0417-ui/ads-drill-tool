@@ -5,8 +5,10 @@ import os from "os";
 
 export const runtime = "nodejs";
 
-// 取り込み済みフォルダ配下のファイルだけ改名を許可（セキュリティ）
+// 取り込み先フォルダ。ここへ Desktop 上の元ファイルを移動＋改名する。
 const IMPORTED_ROOT = path.join(os.homedir(), "Desktop", "AIドリル取込済み");
+// 元ファイルは Desktop 配下のみ許可（セキュリティ）
+const DESKTOP_PATH = path.join(os.homedir(), "Desktop");
 
 const SLOT_LABELS: Record<string, string> = {
   courseMap: "コースマップ",
@@ -44,22 +46,23 @@ export async function POST(request: NextRequest) {
     const prefix = coursePart ? `${coursePart}_` : "";
     const renamed: Record<string, string> = {};
 
+    fs.mkdirSync(IMPORTED_ROOT, { recursive: true });
+
     for (const [slot, filePath] of Object.entries(files)) {
       if (!filePath) continue;
       const label = SLOT_LABELS[slot];
       if (!label) continue;
 
       const resolved = path.resolve(filePath);
-      // 取り込み済みフォルダ外は拒否
-      if (!resolved.startsWith(IMPORTED_ROOT + path.sep)) continue;
+      // 元ファイルは Desktop 配下のみ許可（取込フォルダ内の再改名も Desktop 配下なので許容）
+      if (!resolved.startsWith(DESKTOP_PATH + path.sep)) continue;
       if (!fs.existsSync(resolved)) continue;
 
-      const dir = path.dirname(resolved);
       const ext = path.extname(resolved) || ".png";
 
-      // コース_Lesson_タイトル_Q_役割.png（撮り直し時は上書き）
+      // 取込フォルダへ移動しつつ コース_Lesson_タイトル_Q_役割.png に改名（撮り直し時は上書き）
       const candidate = `${prefix}${lessonPart}_${qPart}_${label}${ext}`;
-      const dest = path.join(dir, candidate);
+      const dest = path.join(IMPORTED_ROOT, candidate);
       if (dest !== resolved) {
         if (fs.existsSync(dest)) fs.unlinkSync(dest);
         fs.renameSync(resolved, dest);
