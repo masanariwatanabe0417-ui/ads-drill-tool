@@ -2,7 +2,7 @@
 
 ## セッション引き継ぎのルール（必ず守る）
 - **作業フォルダ**: `~/Desktop/ads-drill-tool/ads-drill-tool/`（入れ子の方が最新。親フォルダは古い）
-- **セッション開始時**: 必ず `git status` で未コミット確認・`git log --oneline -3` でコミット確認
+- **セッション開始時**: Claude Codeが自動表示するgit状態は親フォルダ（`~/Desktop/ads-drill-tool/`）のものなので**無視**する。必ず `cd ~/Desktop/ads-drill-tool/ads-drill-tool && git status` で確認すること
 - **セッション終了時**: ユーザーから「引き継ぎ」「次のセッション」「コミット＆プッシュ」を求められたら、コミット・プッシュ後に `bash handoff.sh` を実行してクリップボードに引き継ぎメモを生成すること
 - **次にやること**: `NEXT_TASKS.md` を参照・更新する
 

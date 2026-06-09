@@ -33,7 +33,10 @@ NOTE=$(cat <<EOF
 cd ~/Desktop/ads-drill-tool/ads-drill-tool   # 入れ子の方が最新
 npm run dev  # → http://localhost:3000
 
-## Git状態
+## ⚠️ Git状態の誤読に注意
+Claude Codeが起動時に読み込むgit状態は親フォルダ（~/Desktop/ads-drill-tool/）のものです。
+**親フォルダのgit状態は無視してください。古い・別のリポジトリです。**
+正しい状態は以下（ads-drill-tool/ads-drill-tool/ で確認済み）:
 - ブランチ: $BRANCH
 - 最新コミット: $COMMIT
 - 状態: $GIT_STATUS
