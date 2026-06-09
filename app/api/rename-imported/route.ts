@@ -57,14 +57,11 @@ export async function POST(request: NextRequest) {
       const dir = path.dirname(resolved);
       const ext = path.extname(resolved) || ".png";
 
-      // コース_Lesson_タイトル_Q_役割.png（同名は連番）
-      let candidate = `${prefix}${lessonPart}_${qPart}_${label}${ext}`;
-      let dest = path.join(dir, candidate);
-      for (let i = 2; fs.existsSync(dest) && dest !== resolved; i++) {
-        candidate = `${prefix}${lessonPart}_${qPart}_${label}_${i}${ext}`;
-        dest = path.join(dir, candidate);
-      }
+      // コース_Lesson_タイトル_Q_役割.png（撮り直し時は上書き）
+      const candidate = `${prefix}${lessonPart}_${qPart}_${label}${ext}`;
+      const dest = path.join(dir, candidate);
       if (dest !== resolved) {
+        if (fs.existsSync(dest)) fs.unlinkSync(dest);
         fs.renameSync(resolved, dest);
       }
       renamed[slot] = dest;
