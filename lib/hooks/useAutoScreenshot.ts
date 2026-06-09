@@ -4,7 +4,11 @@ import { DrillScreenshots, ScreenshotSlot } from "@/lib/types";
 interface UseAutoScreenshotOptions {
   isEnabled: boolean;
   screenshots: DrillScreenshots;
-  onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
+  onScreenshotUpload: (
+    type: ScreenshotSlot,
+    dataUrl: string,
+    movedPath?: string | null
+  ) => void;
 }
 
 /**
@@ -55,9 +59,12 @@ export function useAutoScreenshot({
           `/api/screenshot-file?path=${encodeURIComponent(filePath)}&slot=${slot}`
         );
         if (!res.ok) return;
-        const { dataUrl } = (await res.json()) as { dataUrl: string };
+        const { dataUrl, movedPath } = (await res.json()) as {
+          dataUrl: string;
+          movedPath?: string | null;
+        };
 
-        upload(slot, dataUrl);
+        upload(slot, dataUrl, movedPath ?? null);
       } catch {
         // ping メッセージなど JSON でないイベントは無視
       }

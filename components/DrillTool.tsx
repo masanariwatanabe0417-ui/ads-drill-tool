@@ -95,6 +95,10 @@ export default function DrillTool() {
   const [teacherError, setTeacherError] = useState<string | null>(null);
   const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
+  // 案B: 自動取込で移動済みファイルの絶対パス（解説生成後にLesson名・Q番号で改名）
+  const [importedFiles, setImportedFiles] = useState<Partial<Record<ScreenshotSlot, string>>>({});
+  const importedFilesRef = useRef(importedFiles);
+  importedFilesRef.current = importedFiles;
 
   // 起動時に保存済み studyLog を読み込む
   useEffect(() => {
@@ -144,21 +148,35 @@ export default function DrillTool() {
           // ドリル本来のQ番号を使用。取得できなければ既存件数+1でフォールバック
           const drillQ: string | null = data.lessonInfo.questionNumber ?? null;
           let assignedQuestionInfo = drillQ ?? "Q?";
-          setStudyLog((prev) => {
-            if (!drillQ) {
-              const existingLesson = prev.courses
-                .find((c) => c.courseKey === courseKey)
-                ?.lessons.find((l) => l.lessonName === info.lesson);
-              assignedQuestionInfo = `Q${(existingLesson?.questions.length ?? 0) + 1}`;
-            }
-            return addToStudyLog(prev, info, assignedQuestionInfo, data.keyLearning ?? "", data.explanation);
-          });
+          if (!drillQ) {
+            const existingLesson = studyLogRef.current.courses
+              .find((c) => c.courseKey === courseKey)
+              ?.lessons.find((l) => l.lessonName === info.lesson);
+            assignedQuestionInfo = `Q${(existingLesson?.questions.length ?? 0) + 1}`;
+          }
+          setStudyLog((prev) =>
+            addToStudyLog(prev, info, assignedQuestionInfo, data.keyLearning ?? "", data.explanation)
+          );
           setTeacherView({
             type: "question",
             courseKey,
             lessonName: info.lesson,
             questionInfo: assignedQuestionInfo,
           });
+          // 案B: 取り込んだファイルを「Lesson_タイトル_Q_役割」に改名
+          const filesToRename = importedFilesRef.current;
+          if (Object.keys(filesToRename).length > 0) {
+            fetch("/api/rename-imported", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                files: filesToRename,
+                lesson: info.lesson,
+                questionInfo: assignedQuestionInfo,
+              }),
+            }).catch(() => {});
+            setImportedFiles({});
+          }
         }
       } catch (err) {
         console.error(err);
@@ -176,8 +194,11 @@ export default function DrillTool() {
     : "courseMapImage";
 
   const handleScreenshotUpload = useCallback(
-    (type: ScreenshotSlot, dataUrl: string) => {
+    (type: ScreenshotSlot, dataUrl: string, movedPath?: string | null) => {
       setScreenshots((prev) => ({ ...prev, [slotKey(type)]: dataUrl }));
+      if (movedPath) {
+        setImportedFiles((prev) => ({ ...prev, [type]: movedPath }));
+      }
       setQaEntries([]);
     },
     []
@@ -186,6 +207,7 @@ export default function DrillTool() {
   // 次の問題へ：問題・解答スロットをクリア（コースマップは維持）
   const handleNextQuestion = useCallback(() => {
     setScreenshots((prev) => ({ ...prev, questionImage: null, answerImage: null }));
+    setImportedFiles((prev) => ({ courseMap: prev.courseMap }));
     setTeacherView(null);
     setQaEntries([]);
   }, []);
@@ -200,6 +222,11 @@ export default function DrillTool() {
 
   const handleScreenshotClear = useCallback((type: ScreenshotSlot) => {
     setScreenshots((prev) => ({ ...prev, [slotKey(type)]: null }));
+    setImportedFiles((prev) => {
+      const next = { ...prev };
+      delete next[type];
+      return next;
+    });
     if (type === "question") {
       setTeacherView(null);
       setCurrentLessonInfo(null);

@@ -45,7 +45,9 @@ export async function GET(request: NextRequest) {
 
     // 取り込み済みファイルを ~/Desktop/AIドリル取込済み/YYYY-MM-DD/ へ移動し、
     // 「役割_日時.png」へ改名（案A）。役割不明時は元の名前のまま。
+    // movedPath は案B（解説生成後のLesson名・Q番号付与）で再改名するため返す。
     let movedName = path.basename(resolvedPath);
+    let movedPath: string | null = null;
     try {
       const today = new Date().toISOString().slice(0, 10);
       const destDir = path.join(os.homedir(), "Desktop", "AIドリル取込済み", today);
@@ -63,14 +65,17 @@ export async function GET(request: NextRequest) {
         }
         fs.renameSync(resolvedPath, dest);
         movedName = candidate;
+        movedPath = dest;
       } else {
-        fs.renameSync(resolvedPath, path.join(destDir, movedName));
+        const dest = path.join(destDir, movedName);
+        fs.renameSync(resolvedPath, dest);
+        movedPath = dest;
       }
     } catch {
       // 移動に失敗しても取り込みは続行
     }
 
-    return NextResponse.json({ dataUrl, fileName: movedName });
+    return NextResponse.json({ dataUrl, fileName: movedName, movedPath });
   } catch {
     return NextResponse.json({ error: "File not found" }, { status: 404 });
   }

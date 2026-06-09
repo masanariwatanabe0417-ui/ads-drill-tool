@@ -18,7 +18,11 @@ function usePasteShortcut() {
 
 interface ScreenshotPaneProps {
   screenshots: DrillScreenshots;
-  onScreenshotUpload: (type: ScreenshotSlot, dataUrl: string) => void;
+  onScreenshotUpload: (
+    type: ScreenshotSlot,
+    dataUrl: string,
+    movedPath?: string | null
+  ) => void;
   onScreenshotClear: (type: ScreenshotSlot) => void;
   onNextQuestion: () => void;
   onOpenDrill: () => void;
