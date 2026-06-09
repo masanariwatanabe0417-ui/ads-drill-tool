@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, ChevronDown, ChevronRight, FileText, GraduationCap } from "lucide-react";
+import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap } from "lucide-react";
 import { StudyLog, TeacherView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -70,6 +70,22 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView }: 
           <p className="text-xs font-bold text-foreground">本気AIドリル</p>
         </div>
         <p className="text-xs text-muted-foreground mt-0.5">まとめ一覧</p>
+      </div>
+
+      {/* 単語帳 */}
+      <div className="p-2 border-b">
+        <button
+          onClick={() => onSelectView({ type: "glossary" })}
+          className={cn(
+            "w-full flex items-center gap-1.5 px-2 py-1.5 rounded-md text-left transition-colors",
+            teacherView?.type === "glossary"
+              ? "bg-primary text-primary-foreground"
+              : "hover:bg-accent"
+          )}
+        >
+          <BookMarked className="h-3.5 w-3.5 shrink-0" />
+          <p className="text-xs font-semibold">単語帳</p>
+        </button>
       </div>
 
       <ScrollArea className="flex-1">

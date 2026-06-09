@@ -1,9 +1,10 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
+import { buildGlossary } from "@/lib/glossary";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 
@@ -14,6 +15,7 @@ interface TeacherPaneProps {
   hasScreenshots: boolean;
   currentLessonInfo: ExtractedLessonInfo | null;
   error?: string | null;
+  onSelectView: (view: TeacherView) => void;
 }
 
 const markdownComponents: Components = {
@@ -154,9 +156,76 @@ function StepGuide() {
   );
 }
 
+// ── 単語帳ビュー ────────────────────────────────────────────────────
+function GlossaryView({
+  studyLog,
+  onSelectView,
+}: {
+  studyLog: StudyLog;
+  onSelectView: (view: TeacherView) => void;
+}) {
+  const terms = buildGlossary(studyLog);
+
+  if (terms.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
+        <BookMarked className="h-10 w-10 opacity-20" />
+        <p className="text-sm">まだ用語がありません</p>
+        <p className="text-xs">問題を解くと用語解説から自動で単語帳が作られます</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h2 className="text-base font-bold text-foreground">単語帳</h2>
+        <p className="text-xs text-muted-foreground mt-1">{terms.length}語</p>
+      </div>
+      <div className="space-y-3">
+        {terms.map((t) => (
+          <div key={t.term} className="border rounded-lg p-3 space-y-1.5">
+            <p className="text-sm font-bold text-primary">{t.term}</p>
+            {t.definitions.map((d, i) => (
+              <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
+            ))}
+            <div className="flex flex-wrap gap-1 pt-1">
+              {t.occurrences.map((o) => (
+                <button
+                  key={`${o.courseKey}__${o.lessonName}__${o.questionInfo}`}
+                  onClick={() =>
+                    onSelectView({
+                      type: "question",
+                      courseKey: o.courseKey,
+                      lessonName: o.lessonName,
+                      questionInfo: o.questionInfo,
+                    })
+                  }
+                  className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 transition-colors"
+                  title={`${o.courseName} ／ ${o.lessonName}`}
+                >
+                  {o.lessonName} {o.questionInfo}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── コンテンツ描画 ──────────────────────────────────────────────────
-function renderContent(studyLog: StudyLog, teacherView: TeacherView): React.ReactNode {
+function renderContent(
+  studyLog: StudyLog,
+  teacherView: TeacherView,
+  onSelectView: (view: TeacherView) => void
+): React.ReactNode {
   if (!teacherView) return null;
+
+  if (teacherView.type === "glossary") {
+    return <GlossaryView studyLog={studyLog} onSelectView={onSelectView} />;
+  }
 
   if (teacherView.type === "question") {
     const course = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
@@ -235,12 +304,15 @@ export default function TeacherPane({
   hasScreenshots,
   currentLessonInfo,
   error,
+  onSelectView,
 }: TeacherPaneProps) {
   const viewLabel =
     teacherView?.type === "course"
       ? "コースまとめ"
       : teacherView?.type === "lesson"
       ? "レッスンまとめ"
+      : teacherView?.type === "glossary"
+      ? "単語帳"
       : teacherView?.type === "question"
       ? teacherView.questionInfo
       : null;
@@ -278,7 +350,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView)
+            renderContent(studyLog, teacherView, onSelectView)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

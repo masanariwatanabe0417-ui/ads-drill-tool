@@ -49,4 +49,5 @@ export type TeacherView =
   | { type: "question"; courseKey: string; lessonName: string; questionInfo: string }
   | { type: "lesson"; courseKey: string; lessonName: string }
   | { type: "course"; courseKey: string }
+  | { type: "glossary" }
   | null;
