@@ -75,8 +75,22 @@ export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
     }
   }
 
-  // 日本語順にソート
+  // あいうえお順にソート。
+  // 用語が英語表記（例 "conflict(コンフリクト)"）の場合は、括弧内の
+  // 振り仮名（コンフリクト）を読みキーにする。日本語表記（例 "マージ(merge)"）は
+  // そのまま用語本体を読みキーにする。
+  const readingKey = (term: string) => {
+    const m = term.match(/^\s*([^(（]+?)\s*[(（]([^)）]*)[)）]/);
+    if (m) {
+      const head = m[1].trim();
+      const inside = m[2].trim();
+      // 用語本体が英字主体なら振り仮名（括弧内）を読みにする
+      if (/^[A-Za-z0-9.\-\s]+$/.test(head) && inside) return inside;
+      return head;
+    }
+    return term.trim();
+  };
   return Array.from(map.values()).sort((a, b) =>
-    a.term.localeCompare(b.term, "ja")
+    readingKey(a.term).localeCompare(readingKey(b.term), "ja")
   );
 }
