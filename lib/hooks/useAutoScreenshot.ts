@@ -43,21 +43,21 @@ export function useAutoScreenshot({
         // 全スロットが埋まっていたら取り込まない
         if (ss.courseMapImage && ss.questionImage && ss.answerImage) return;
 
-        // ファイルを base64 で取得
+        // 役割（コースマップ → 問題 → 解答）を先に確定し、改名に使う
+        const slot: ScreenshotSlot = !ss.courseMapImage
+          ? "courseMap"
+          : !ss.questionImage
+          ? "question"
+          : "answer";
+
+        // ファイルを base64 で取得（役割を渡し、取込済みフォルダで「役割_日時」に改名させる）
         const res = await fetch(
-          `/api/screenshot-file?path=${encodeURIComponent(filePath)}`
+          `/api/screenshot-file?path=${encodeURIComponent(filePath)}&slot=${slot}`
         );
         if (!res.ok) return;
         const { dataUrl } = (await res.json()) as { dataUrl: string };
 
-        // コースマップ → 問題 → 解答 の順に振り分け
-        if (!ss.courseMapImage) {
-          upload("courseMap", dataUrl);
-        } else if (!ss.questionImage) {
-          upload("question", dataUrl);
-        } else {
-          upload("answer", dataUrl);
-        }
+        upload(slot, dataUrl);
       } catch {
         // ping メッセージなど JSON でないイベントは無視
       }
