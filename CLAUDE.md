@@ -1,83 +1,50 @@
 # ads-drill-tool — 本気AIドリル
 
-## セッション引き継ぎのルール（必ず守る）
-- **作業フォルダ**: `~/Desktop/ads-drill-tool/ads-drill-tool/`（入れ子の方が最新。親フォルダは古い）
-- **セッション開始時**: 最初に `NEXT_SESSION.md` が存在すれば必ず読み込んで内容を確認する。Claude Codeが自動表示するgit状態は親フォルダのものなので**無視**する。正しい状態は `cd ~/Desktop/ads-drill-tool/ads-drill-tool && git status` で確認すること
-- **セッション終了時**: コミット・プッシュ後に `bash handoff.sh` を実行する。`NEXT_SESSION.md` に自動保存されるので次セッションが貼り付けなしで引き継げる
-- **次にやること**: `NEXT_TASKS.md` を参照・更新する
+## ⚡ 現在の状態（handoff.sh が自動更新）
+<!-- STATE_START -->
+- ブランチ: main / コミット: 575aa88 / 状態: ⚠️ 未コミットあり
+- 最終作業: 引き継ぎをNEXT_SESSION.mdに自動保存する仕組みに変更
+- 次候補: A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
+<!-- STATE_END -->
+
+## ⚠️ セッションのルール
+- **作業フォルダ**: `~/Desktop/ads-drill-tool/ads-drill-tool/`（入れ子が最新。親フォルダは古い別リポジトリ）
+- **git状態**: 起動時に表示されるgit状態は親フォルダのものなので**無視**。上記「現在の状態」を信頼する
+- **終了時**: コミット・プッシュ後に `bash handoff.sh` を実行すると上記が自動更新される
 
 ## 概要
-「本気AIドリル」の学習支援ツール。問題・解答のスクリーンショットを貼り付けると、Claude AI が自動解析して解説を生成する。コース/レッスン/問題の階層でまとめを管理できる。
+問題・解答のスクリーンショットを貼り付けると Claude AI が解説を生成。コース/レッスン/問題の階層で管理。
 
 ## スタック
-- **フレームワーク**: Next.js 14 (App Router) + TypeScript
-- **UI**: Tailwind CSS + shadcn/ui (card, button, badge, textarea, scroll-area, separator)
-- **AI**: Anthropic SDK (`@anthropic-ai/sdk`) — haiku (高速), opus (高品質解説)
+- Next.js 14 (App Router) + TypeScript
+- Tailwind CSS + shadcn/ui
+- Anthropic SDK — haiku（高速）/ opus（高品質解説）
 
-## アーキテクチャ
-
-### 4ペイン構成
+## 4ペイン構成
 ```
 NavigationPane (w-60) | ScreenshotPane (w-72) | TeacherPane (flex-1) | QuestionPane (w-80)
 ```
+- NavigationPane: コース/レッスン/問題ツリー
+- ScreenshotPane: スクショ貼り付け
+- TeacherPane: AI解説・単語帳表示
+- QuestionPane: Q&Aチャット・単語帳編集
 
-| ペイン | ファイル | 役割 |
-|--------|----------|------|
-| NavigationPane | `components/panes/NavigationPane.tsx` | コース/レッスン/問題の階層ツリー |
-| ScreenshotPane | `components/panes/ScreenshotPane.tsx` | 問題・解答スクショ貼り付け |
-| TeacherPane | `components/panes/TeacherPane.tsx` | AI解説表示 (question/lesson/course view) |
-| QuestionPane | `components/panes/QuestionPane.tsx` | Q&Aチャット + 解説追記承認 |
-
-### ルート状態管理
-`components/DrillTool.tsx` が全状態を保持:
-- `screenshots`: 問題・解答画像
-- `studyLog`: コース/レッスン/問題の階層データ（セッション中のみ、永続化なし）
-- `teacherView`: 現在表示中のビュー種別
-- `qaEntries`: Q&Aエントリ一覧
-
-### API ルート
-| ルート | ファイル | 説明 |
-|--------|----------|------|
-| POST /api/teacher | `app/api/teacher/route.ts` | 3エージェント並列: extractLessonInfo(haiku) + generateGlossary(haiku) + generateExplanation(opus) |
-| POST /api/question | `app/api/question/route.ts` | Q&A回答生成(haiku) + 解説への追加案生成 |
-
-### 型定義
-`lib/types.ts`: `DrillScreenshots`, `QAEntry`, `ExtractedLessonInfo`, `StudyLog`, `CourseData`, `LessonData`, `QuestionEntry`, `TeacherView`
+## 主要ファイル
+| ファイル | 役割 |
+|----------|------|
+| `components/DrillTool.tsx` | 全状態管理 |
+| `components/panes/TeacherPane.tsx` | 先生ペイン・単語帳UI |
+| `components/panes/QuestionPane.tsx` | 質問ペイン |
+| `lib/glossary.ts` | 単語帳ビルド・ソート・重複統合 |
+| `app/api/teacher/route.ts` | 解説生成（3エージェント並列） |
+| `app/api/question/route.ts` | Q&A・単語帳定義改善 |
+| `app/api/glossary-consolidate/route.ts` | 複数定義をAIで統合 |
 
 ## 開発コマンド
 ```bash
-npm run dev    # 開発サーバー起動 (http://localhost:3000)
-npm run build  # ビルド
-npm run lint   # lint
+npm run dev   # http://localhost:3000
 ```
 
-## 環境変数
-`.env.local.example` を参照:
-```
-ANTHROPIC_API_KEY=...
-```
-
-## 現状の制約
-- `studyLog` はセッション中のみ（ページリロードでリセット）
-- 画像は base64 でそのまま API に送信（大きいスクリーンショットは注意）
-
-## ⚠️ セキュリティ・運用の鉄則（過去にトラブルあり。必ず守る）
-
-### APIキーの扱い
-- **APIキー等の秘密情報は `.env.local` だけに置く**（`.gitignore`済み。Next.jsで `.env` より優先）。
-- **`.md`・コード・コミットメッセージ・引き継ぎメモにキーを絶対に書かない。**
-  - 過去に `NEXT_SESSION.md` にキーを貼り、**public リポジトリへ漏洩**した（2026-06-08）。
-  - 引き継ぎでは「キーは各自 console.anthropic.com で確認」と書くだけにする。
-- gitリモートURLに PAT（`ghp_...`）を埋め込まない。`gh auth login` を使う。
-
-### APIキーの差し替え（無停止手順・順番厳守）
-ツールは `new Anthropic()` で `process.env.ANTHROPIC_API_KEY` を読む。Revokeを先にやると即停止する。
-1. console.anthropic.com で**新キーを発行**（まだ旧キーをRevokeしない）。
-2. `bash set-api-key.sh <新キー>` → キーを検証してから `.env.local` に書き込む（不正なら無変更）。
-3. `npm run dev` を再起動して動作確認。
-4. 確認できたら**最後に**旧キーをRevoke。
-
-### フォルダ・git運用
-- PC間共有は **GitHubのpull/push** が正道。**iCloudで `.git` を同期しない**（競合コピーで壊れる）。
-- 作業フォルダの中で再 `git clone` しない（履歴の異なる重複リポジトリができる）。1台＝1作業フォルダ。
-- 「最新か」はファイル同期でなく `git merge-base --is-ancestor HEAD origin/main` 等のgit履歴で判定する。
+## ⚠️ 鉄則
+- APIキーは `.env.local` のみ。コード・コミット・mdに絶対書かない（過去に漏洩あり）
+- PC間共有は GitHub push/pull。iCloud で .git を同期しない
