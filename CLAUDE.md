@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: school-deploy-experiment / コミット: 134b64d / 状態: ✅ クリーン
-- 最終作業: handoff: 現在状態を更新（school-deploy-experiment / DB対応）
-- 次候補: A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
+- ブランチ: school-deploy-experiment / コミット: fd26c70 / 状態: ⚠️ 未コミットあり
+- 最終作業: handoff: フォルダ整理完了・トークン無効化済み。次はステップ②Neon準備
+- 次候補: ★最優先（スクール課題の続き）: ステップ②Neon（DB）準備 → DATABASE_URLを.env.localに設定 → ④リロードで消えない確認 → ⑤Vercelデプロイ。設計は決定済み(study_logテーブルにJSONB1行)。lib/db.tsとapp/api/study-log/route.ts実装済み（DATABASE_URL有無でDB/ファイル自動切替）。実験はschool-deploy-experimentブランチで進め、完成後mainで本当の最適化に戻る方針。 A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
