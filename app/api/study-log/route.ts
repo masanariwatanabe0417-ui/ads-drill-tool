@@ -5,6 +5,9 @@ import os from "os";
 import { sql, hasDatabase, ensureStudyLogTable } from "@/lib/db";
 
 export const runtime = "nodejs";
+// 引数なしの GET はビルド時に静的化され、デプロイ後もビルド時点のデータが
+// 返り続けてしまうため、毎リクエスト実行を強制する
+export const dynamic = "force-dynamic";
 
 const EMPTY = { courses: [] };
 

@@ -4,6 +4,9 @@ import path from "path";
 import os from "os";
 
 export const runtime = "nodejs";
+// SSE で接続を張り続けるルートのため、ビルド時の静的生成を禁止する
+// （これがないと next build がこのルートを実行しようとしてタイムアウトで失敗する）
+export const dynamic = "force-dynamic";
 
 const DESKTOP_PATH = path.join(os.homedir(), "Desktop");
 
