@@ -6,7 +6,7 @@ cd "$REPO_DIR"
 
 BRANCH=$(git branch --show-current)
 COMMIT=$(git rev-parse --short HEAD)
-DIRTY=$(git status --porcelain)
+DIRTY=$(git status --porcelain -- ':!CLAUDE.md')
 LAST_MSG=$(git log --oneline -1 | sed 's/^[a-f0-9]* //')
 NEXT_TASKS=$(cat "$REPO_DIR/NEXT_TASKS.md" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g')
 

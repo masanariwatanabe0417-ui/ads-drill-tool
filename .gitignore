@@ -35,3 +35,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# 入れ子リポジトリ（古いバージョン）
+ads-drill-tool/
+
+# Claude Code が自動更新するファイル（コミット不要）
+.claude/settings.local.json
+NEXT_SESSION.md
