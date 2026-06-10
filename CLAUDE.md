@@ -8,9 +8,10 @@
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
-- **作業フォルダ**: `~/Desktop/ads-drill-tool/ads-drill-tool/`（入れ子が最新。親フォルダは古い別リポジトリ）
-- **git状態**: 起動時に表示されるgit状態は親フォルダのものなので**無視**。上記「現在の状態」を信頼する
+- **作業フォルダ**: `~/Desktop/ads-drill-tool/`（2026-06-10にフォルダを一本化。入れ子・重複repoは解消済み）
+- **正本はGitHub**: `github.com/masanariwatanabe0417-ui/ads-drill-tool`。迷ったらGitHubが正。
 - **終了時**: コミット・プッシュ後に `bash handoff.sh` を実行すると上記が自動更新される
+- ~~旧: 親フォルダ/入れ子の二重構造~~ → 解消済み。旧フォルダは `~/Desktop/_ads-drill-tool_OLD` に退避（確認後削除可）
 
 ## 概要
 問題・解答のスクリーンショットを貼り付けると Claude AI が解説を生成。コース/レッスン/問題の階層で管理。
