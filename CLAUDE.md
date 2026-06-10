@@ -2,8 +2,8 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: main / コミット: 575aa88 / 状態: ⚠️ 未コミットあり
-- 最終作業: 引き継ぎをNEXT_SESSION.mdに自動保存する仕組みに変更
+- ブランチ: school-deploy-experiment / コミット: 1cccf9f / 状態: ✅ クリーン
+- 最終作業: studyLogのNeon(DB)保存に対応：DATABASE_URL有無でDB/ファイルを自動切替
 - 次候補: A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
 <!-- STATE_END -->
 
