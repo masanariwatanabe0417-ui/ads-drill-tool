@@ -1,10 +1,10 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine, Search, Eye, EyeOff } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
-import { buildGlossary, GlossaryTerm } from "@/lib/glossary";
+import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { useEffect, useRef, useState } from "react";
@@ -193,13 +193,22 @@ function GlossaryCard({
   onDeleteTerm,
   onFocusTerm,
   isFocused,
+  concealed = false,
 }: {
   term: GlossaryTerm;
   onSelectView: (view: TeacherView) => void;
   onDeleteTerm: (term: string) => void;
   onFocusTerm: (term: string) => void;
   isFocused: boolean;
+  concealed?: boolean;
 }) {
+  const [revealed, setRevealed] = useState(false);
+
+  // 暗記モードの ON/OFF が切り替わったら全カードを再び隠す
+  useEffect(() => {
+    setRevealed(false);
+  }, [concealed]);
+
   const [consolidated, setConsolidated] = useState<string | null>(() =>
     term.definitions.length >= 2 ? loadCached(term.term, term.definitions) : null
   );
@@ -257,28 +266,39 @@ function GlossaryCard({
         <p className="text-sm font-bold text-primary">{term.term}</p>
         {consolidating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />}
       </div>
-      {displayDefs.map((d, i) => (
-        <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
-      ))}
-      <div className="flex flex-wrap gap-1 pt-1">
-        {term.occurrences.map((o) => (
-          <button
-            key={`${o.courseKey}__${o.lessonName}__${o.questionInfo}`}
-            onClick={() =>
-              onSelectView({
-                type: "question",
-                courseKey: o.courseKey,
-                lessonName: o.lessonName,
-                questionInfo: o.questionInfo,
-              })
-            }
-            className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 transition-colors"
-            title={`${o.courseName} ／ ${o.lessonName}`}
-          >
-            {o.lessonName} {o.questionInfo}
-          </button>
-        ))}
-      </div>
+      {concealed && !revealed ? (
+        <button
+          onClick={() => setRevealed(true)}
+          className="w-full rounded-md border border-dashed border-violet-200 bg-violet-50/50 py-3 text-xs text-violet-500 hover:bg-violet-100/60 transition-colors"
+        >
+          クリックで意味を表示
+        </button>
+      ) : (
+        <>
+          {displayDefs.map((d, i) => (
+            <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
+          ))}
+          <div className="flex flex-wrap gap-1 pt-1">
+            {term.occurrences.map((o) => (
+              <button
+                key={`${o.courseKey}__${o.lessonName}__${o.questionInfo}`}
+                onClick={() =>
+                  onSelectView({
+                    type: "question",
+                    courseKey: o.courseKey,
+                    lessonName: o.lessonName,
+                    questionInfo: o.questionInfo,
+                  })
+                }
+                className="inline-flex items-center gap-1 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 hover:bg-blue-100 transition-colors"
+                title={`${o.courseName} ／ ${o.lessonName}`}
+              >
+                {o.lessonName} {o.questionInfo}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -299,6 +319,10 @@ function GlossaryView({
   focusTerm: string | null;
   onFocusTerm: (term: string) => void;
 }) {
+  const [query, setQuery] = useState("");
+  const [courseFilter, setCourseFilter] = useState<string>("all");
+  const [memorizeMode, setMemorizeMode] = useState(false);
+
   const allTerms = buildGlossary(studyLog);
   const deletedSet = new Set(deletedTerms.map((t) => t.toLowerCase()));
   const terms = allTerms.filter((t) => !deletedSet.has(t.term.toLowerCase()));
@@ -313,24 +337,126 @@ function GlossaryView({
     );
   }
 
+  // 用語が1語以上登場するコースだけをフィルタ候補に出す
+  const courses = studyLog.courses.filter((c) =>
+    terms.some((t) => t.occurrences.some((o) => o.courseKey === c.courseKey))
+  );
+
+  const normalizedQuery = normalizeForSearch(query.trim());
+  const filtered = terms.filter((t) => {
+    if (
+      courseFilter !== "all" &&
+      !t.occurrences.some((o) => o.courseKey === courseFilter)
+    ) {
+      return false;
+    }
+    if (normalizedQuery) {
+      const haystack = normalizeForSearch(
+        [t.term, ...t.definitions].join("\n")
+      );
+      if (!haystack.includes(normalizedQuery)) return false;
+    }
+    return true;
+  });
+
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base font-bold text-foreground">単語帳</h2>
-        <p className="text-xs text-muted-foreground mt-1">{terms.length}語</p>
+      {/* ヘッダー + 暗記モードトグル */}
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-foreground">単語帳</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            {filtered.length === terms.length
+              ? `${terms.length}語`
+              : `${filtered.length}語 / 全${terms.length}語`}
+          </p>
+        </div>
+        <button
+          onClick={() => setMemorizeMode((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors shrink-0 ${
+            memorizeMode
+              ? "border-violet-300 bg-violet-100 text-violet-700"
+              : "border-border bg-background text-muted-foreground hover:bg-muted"
+          }`}
+          title="意味を隠して暗記チェック"
+        >
+          {memorizeMode ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+          暗記モード
+        </button>
       </div>
-      <div className="space-y-3">
-        {terms.map((t) => (
-          <GlossaryCard
-            key={t.term}
-            term={t}
-            onSelectView={onSelectView}
-            onDeleteTerm={onDeleteTerm}
-            onFocusTerm={onFocusTerm}
-            isFocused={focusTerm?.toLowerCase() === t.term.toLowerCase()}
-          />
-        ))}
+
+      {/* 検索ボックス */}
+      <div className="relative">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="用語・意味で検索（ひらがなでもOK）"
+          className="w-full rounded-md border bg-background pl-8 pr-8 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-violet-300"
+        />
+        {query && (
+          <button
+            onClick={() => setQuery("")}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded hover:bg-muted text-muted-foreground"
+            title="クリア"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
+
+      {/* コース別フィルタ */}
+      {courses.length >= 2 && (
+        <div className="flex flex-wrap gap-1.5">
+          <button
+            onClick={() => setCourseFilter("all")}
+            className={`rounded-full border px-2.5 py-1 text-xs transition-colors ${
+              courseFilter === "all"
+                ? "border-blue-300 bg-blue-100 text-blue-700 font-medium"
+                : "border-border bg-background text-muted-foreground hover:bg-muted"
+            }`}
+          >
+            すべて
+          </button>
+          {courses.map((c) => (
+            <button
+              key={c.courseKey}
+              onClick={() => setCourseFilter(c.courseKey)}
+              className={`rounded-full border px-2.5 py-1 text-xs transition-colors max-w-[180px] truncate ${
+                courseFilter === c.courseKey
+                  ? "border-blue-300 bg-blue-100 text-blue-700 font-medium"
+                  : "border-border bg-background text-muted-foreground hover:bg-muted"
+              }`}
+              title={c.courseName}
+            >
+              {c.courseName}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center gap-2 py-12 text-center text-muted-foreground">
+          <Search className="h-8 w-8 opacity-20" />
+          <p className="text-sm">該当する用語がありません</p>
+          <p className="text-xs">検索語やコースフィルタを変えてみてください</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map((t) => (
+            <GlossaryCard
+              key={t.term}
+              term={t}
+              onSelectView={onSelectView}
+              onDeleteTerm={onDeleteTerm}
+              onFocusTerm={onFocusTerm}
+              isFocused={focusTerm?.toLowerCase() === t.term.toLowerCase()}
+              concealed={memorizeMode}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 }

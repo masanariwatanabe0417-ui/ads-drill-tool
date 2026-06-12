@@ -66,6 +66,11 @@ function dedupeKey(term: string): string {
   return readingKey(term).toLowerCase();
 }
 
+// 検索用正規化: ひらがな→カタカナ + 小文字化（"まーじ" でも "マージ(merge)" にヒット）
+export function normalizeForSearch(s: string): string {
+  return toKatakana(s).toLowerCase();
+}
+
 // studyLog 全体を走査して用語ごとに集約した単語帳を作る（追加API不要）。
 // glossaryOverrides に登録された用語はその定義を優先する（AI統合・複数定義を上書き）。
 export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {

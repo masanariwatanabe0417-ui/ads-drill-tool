@@ -1,6 +1,7 @@
-★スクール課題①〜⑤すべて完了🎉 ⑤Vercelデプロイ完了（2026-06-13）: 公開URL https://ads-drill-tool.vercel.app ／Vercelプロジェクトads-drill-tool（チームmaru's projects・Hobby）／Productionブランチ=school-deploy-experiment／環境変数DATABASE_URL・ANTHROPIC_API_KEY設定済み／DBから6コース配信確認済み。デプロイ失敗の原因は2つ修正: (1)古いpnpm-lock.yamlでERR_PNPM_OUTDATED_LOCKFILE→pnpm関連ファイル削除しnpmに一本化 (2)watch-screenshots/study-logにforce-dynamic追加。今後はschool-deploy-experimentにpushすると自動で本番デプロイされる。★2026-06-13: school-deploy-experimentをmainにfast-forwardマージ済み。今後の開発はmainで（ローカル版ベースのレベルアップ）。mainへのpushは公開URLに影響しない（VercelのProductionブランチはschool-deploy-experimentのまま＝公開版は課題完成状態で凍結）。★保存方式は決定済み: ローカル=ファイル保存に切替完了（2026-06-13）。.env.localのDATABASE_URLをコメントアウト（#を外せばDB保存に即復帰可）。DBの最新データ(7コース)を~/Desktop/AIドリル取込済み/studyLog.jsonに書き出し済み。公開URLはVercel側の環境変数で動くため影響なし＝提出物はDB版のまま稼働中。次: ローカル版の機能強化（A〜D候補）。
-⚠️ 新規の注意: 公開URLは認証なしで誰でもアクセス可能＝先生ペインのAI解説を他人が使うとANTHROPIC_API_KEYの課金が発生しうる。対策候補: Vercel Deployment Protection / 簡易パスワード / D.リポジトリprivate化とあわせて検討
+★2026-06-13: B.単語帳の改良 完了✅（コース別フィルタ＝チップ式・検索ボックス＝ひらがな/カタカナ同一視・暗記モード＝意味を隠してクリックでめくる）。実装はTeacherPane.tsxのGlossaryView/GlossaryCardとlib/glossary.tsのnormalizeForSearch。プレビューで62語・Gitコース29語絞り込み・ひらがな検索・めくり動作を確認済み。型チェックOK。
+★前提（変わらず）: 公開URL https://ads-drill-tool.vercel.app はVercel Productionブランチ=school-deploy-experimentで凍結稼働中。mainへのpushは公開URLに影響しない。ローカル=ファイル保存（.env.localのDATABASE_URLコメントアウト中、#を外せばDB復帰）。DBデータは~/Desktop/AIドリル取込済み/studyLog.jsonに書き出し済み。
+⚠️ 注意（未対応）: 公開URLは認証なしで誰でもアクセス可能＝先生ペインのAI解説を他人が使うとANTHROPIC_API_KEYの課金が発生しうる。対策候補: Vercel Deployment Protection / 簡易パスワード / D.リポジトリprivate化とあわせて検討
+残りの候補:
 A. 先生ペインの図解化（Mermaid等・新エージェント追加）
-B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード）
 C. ストリーミング対応（解説を逐次表示）
 D. リポジトリのprivate化
