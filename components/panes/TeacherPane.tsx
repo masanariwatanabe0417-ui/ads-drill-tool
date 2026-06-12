@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine, Search, Eye, EyeOff, Pencil } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -273,7 +273,7 @@ function GlossaryCard({
           className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-violet-600"
           title="質問ペインで質問する"
         >
-          <PenLine className="h-3.5 w-3.5" />
+          <MessageCircle className="h-3.5 w-3.5" />
         </button>
         <button
           onClick={() => onDeleteTerm(term.term)}
