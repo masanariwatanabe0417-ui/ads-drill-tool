@@ -295,12 +295,14 @@ export default function DrillTool() {
     []
   );
 
-  // 次の問題へ：問題・解答スロットをクリア（コースマップは維持）
+  // 次の問題へ：問題・解答スロットをクリア（コースマップは維持）し、ドリルを自動で開く
   const handleNextQuestion = useCallback(() => {
     setScreenshots((prev) => ({ ...prev, questionImage: null, answerImage: null }));
     setImportedFiles((prev) => ({ courseMap: prev.courseMap }));
     setTeacherView(null);
     setQaEntries([]);
+    setIsDrillPanelOpen(true);
+    setIsAutoEnabled(true);
   }, []);
 
   // 解答がセットされたら自動解析
