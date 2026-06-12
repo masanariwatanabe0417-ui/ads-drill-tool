@@ -45,17 +45,13 @@ async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDat
   });
   const raw = message.content.length > 0 && message.content[0].type === "text" ? message.content[0].text : "{}";
   const match = raw.match(/\{[\s\S]*\}/);
-  try {
-    const parsed = match ? JSON.parse(match[0]) : {};
-    return {
-      series: parsed.series ?? "不明",
-      course: parsed.course ?? "不明",
-      lesson: parsed.lesson ?? "不明",
-      questionNumber: parsed.questionNumber ?? null,
-    };
-  } catch {
-    return { series: "不明", course: "不明", lesson: "不明", questionNumber: null };
-  }
+  const parsed = (match ? parseLooseJson(match[0]) : null) ?? {};
+  return {
+    series: typeof parsed.series === "string" ? parsed.series : "不明",
+    course: typeof parsed.course === "string" ? parsed.course : "不明",
+    lesson: typeof parsed.lesson === "string" ? parsed.lesson : "不明",
+    questionNumber: typeof parsed.questionNumber === "string" ? parsed.questionNumber : null,
+  };
 }
 
 // Agent②: 専門用語解説を生成（haiku - 用語特化）
@@ -90,11 +86,85 @@ async function generateGlossary(imageBlocks: ImageBlock[]) {
   return message.content.length > 0 && message.content[0].type === "text" ? message.content[0].text.trim() : "## 用語解説\n（用語解説を生成できませんでした）";
 }
 
+// モデルがJSON文字列内に実改行・タブを入れて返すことがあり、素のJSON.parseだと失敗する。
+// 文字列内の制御文字だけをエスケープしてから再パースする。
+function parseLooseJson(text: string): Record<string, unknown> | null {
+  try {
+    return JSON.parse(text);
+  } catch {}
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) { out += ch; escaped = false; continue; }
+      if (ch === "\\") { out += ch; escaped = true; continue; }
+      if (ch === '"') { inString = false; out += ch; continue; }
+      if (ch === "\n") { out += "\\n"; continue; }
+      if (ch === "\r") continue;
+      if (ch === "\t") { out += "\\t"; continue; }
+      out += ch;
+    } else {
+      if (ch === '"') inString = true;
+      out += ch;
+    }
+  }
+  try {
+    return JSON.parse(out);
+  } catch {
+    return null;
+  }
+}
+
+// モデルが「覚えるポイント」等を mainContent の外側の独自キーに分けて返すことがあるため、
+// keyLearning/mainContent 以外のキーは見出し付きで本文に取り込む。
+function composeExplanation(parsed: Record<string, unknown>): { keyLearning: string; mainContent: string } {
+  const keyLearning = typeof parsed.keyLearning === "string" ? parsed.keyLearning : "";
+  let mainContent = typeof parsed.mainContent === "string" ? parsed.mainContent : "";
+  for (const [key, value] of Object.entries(parsed)) {
+    if (key === "keyLearning" || key === "mainContent") continue;
+    const heading = key.replace(/^#+\s*/, "");
+    if (typeof value === "string" && value.trim()) {
+      mainContent += `\n\n## ${heading}\n${value.trim()}`;
+    } else if (Array.isArray(value)) {
+      const items = value.filter((v): v is string => typeof v === "string");
+      if (items.length > 0) {
+        mainContent += `\n\n## ${heading}\n${items.map((v) => `- ${v}`).join("\n")}`;
+      }
+    }
+  }
+  return { keyLearning, mainContent: mainContent.trim() };
+}
+
 // Agent③: 解説・keyLearning・覚えるべきポイントを生成（haiku - 高品質）
+// structured outputs（output_config.format）でJSONの妥当性とキー構成をAPIレベルで保証する。
+// 以前はテキストでJSONを書かせていたため、文字列内の実改行やキー欠落でパースが壊れ、
+// 画面に生JSONが表示される事故があった。
 async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean) {
-  const message = await client.messages.create({
+  const message = await client.beta.messages.create({
     model: "claude-haiku-4-5",
-    max_tokens: 1500,
+    // max_tokensに達するとJSONが途中で切れてパース不能になるため余裕を持たせる
+    max_tokens: 2048,
+    output_config: {
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: {
+            keyLearning: {
+              type: "string",
+              description: "この問題で学ぶ核心を1〜2文で（自分の言葉で、英語用語にはカタカナを括弧で補足）",
+            },
+            mainContent: {
+              type: "string",
+              description: "Markdown形式の解説本文。## 問題 / ## 正解 / ## なぜこれが正解？ / ## 間違い選択肢のどこが違う？ / ## 覚えるポイント の見出し構成",
+            },
+          },
+          required: ["keyLearning", "mainContent"],
+          additionalProperties: false,
+        },
+      },
+    },
     messages: [
       {
         role: "user",
@@ -121,13 +191,14 @@ async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean
       },
     ],
   });
-  const raw = message.content.length > 0 && message.content[0].type === "text" ? message.content[0].text : "{}";
-  const match = raw.match(/\{[\s\S]*\}/);
-  try {
-    return match ? JSON.parse(match[0]) : { keyLearning: "", mainContent: "" };
-  } catch {
+  const block = message.content.find((b) => b.type === "text");
+  const raw = block && block.type === "text" ? block.text : "{}";
+  // structured outputsで有効なJSONが保証されるが、保険として寛容パースを通す
+  const parsed = parseLooseJson(raw);
+  if (!parsed) {
     return { keyLearning: "", mainContent: raw };
   }
+  return composeExplanation(parsed);
 }
 
 export async function POST(req: Request) {
