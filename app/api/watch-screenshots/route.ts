@@ -1,5 +1,6 @@
 import { type NextRequest } from "next/server";
 import chokidar from "chokidar";
+import fs from "fs";
 import path from "path";
 import os from "os";
 
@@ -22,6 +23,9 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     start(controller) {
+      // 監視開始時刻。これより前に作られたファイルは拾わない（既存スクショの取込防止）
+      // ignoreInitial と二重のガード。1秒の猶予は監視開始と同時刻のスクショを取りこぼさないため
+      const watchStartedAt = Date.now() - 1_000;
       const send = (data: string) => {
         try {
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
@@ -41,11 +45,17 @@ export async function GET(request: NextRequest) {
         },
       });
 
-      watcher.on("add", (filePath: string) => {
+      watcher.on("add", (filePath: string, stats?: fs.Stats) => {
         const fileName = path.basename(filePath);
-        if (MAC_SCREENSHOT_REGEX.test(fileName)) {
-          send(JSON.stringify({ filePath }));
+        if (!MAC_SCREENSHOT_REGEX.test(fileName)) return;
+        try {
+          const st = stats ?? fs.statSync(filePath);
+          // 監視開始より前に存在していたファイルは新規スクショではないので無視
+          if (st.mtimeMs < watchStartedAt) return;
+        } catch {
+          return; // stat できないファイルは拾わない
         }
+        send(JSON.stringify({ filePath }));
       });
 
       watcher.on("error", (error: unknown) => {
