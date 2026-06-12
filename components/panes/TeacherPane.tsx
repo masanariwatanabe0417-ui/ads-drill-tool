@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine, Search, Eye, EyeOff } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, PenLine, Search, Eye, EyeOff, Pencil } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -19,6 +19,7 @@ interface TeacherPaneProps {
   onSelectView: (view: TeacherView) => void;
   deletedGlossaryTerms?: string[];
   onDeleteGlossaryTerm?: (term: string) => void;
+  onRenameGlossaryTerm?: (oldTerm: string, newTerm: string) => void;
   glossaryFocusTerm?: string | null;
   onFocusGlossaryTerm?: (term: string) => void;
 }
@@ -191,6 +192,7 @@ function GlossaryCard({
   term,
   onSelectView,
   onDeleteTerm,
+  onRenameTerm,
   onFocusTerm,
   isFocused,
   concealed = false,
@@ -198,16 +200,25 @@ function GlossaryCard({
   term: GlossaryTerm;
   onSelectView: (view: TeacherView) => void;
   onDeleteTerm: (term: string) => void;
+  onRenameTerm: (oldTerm: string, newTerm: string) => void;
   onFocusTerm: (term: string) => void;
   isFocused: boolean;
   concealed?: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [termDraft, setTermDraft] = useState(term.term);
 
   // 暗記モードの ON/OFF が切り替わったら全カードを再び隠す
   useEffect(() => {
     setRevealed(false);
   }, [concealed]);
+
+  const commitRename = () => {
+    setEditing(false);
+    const next = termDraft.trim();
+    if (next && next !== term.term) onRenameTerm(term.term, next);
+  };
 
   const [consolidated, setConsolidated] = useState<string | null>(() =>
     term.definitions.length >= 2 ? loadCached(term.term, term.definitions) : null
@@ -248,6 +259,16 @@ function GlossaryCard({
     <div className={`border rounded-lg p-3 space-y-1.5 relative group ${isFocused ? "border-violet-400 bg-violet-50/40" : ""}`}>
       <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
+          onClick={() => {
+            setTermDraft(term.term);
+            setEditing(true);
+          }}
+          className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-blue-600"
+          title="用語名を修正（読みの間違いなど）"
+        >
+          <Pencil className="h-3.5 w-3.5" />
+        </button>
+        <button
           onClick={() => onFocusTerm(term.term)}
           className="p-0.5 rounded hover:bg-muted text-muted-foreground hover:text-violet-600"
           title="質問ペインで質問する"
@@ -262,8 +283,23 @@ function GlossaryCard({
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
-      <div className="flex items-center gap-1.5 pr-12">
-        <p className="text-sm font-bold text-primary">{term.term}</p>
+      <div className="flex items-center gap-1.5 pr-16">
+        {editing ? (
+          <input
+            type="text"
+            value={termDraft}
+            autoFocus
+            onChange={(e) => setTermDraft(e.target.value)}
+            onBlur={commitRename}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commitRename();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="w-full rounded border border-blue-300 bg-background px-1.5 py-0.5 text-sm font-bold text-primary focus:outline-none focus:ring-2 focus:ring-blue-300"
+          />
+        ) : (
+          <p className="text-sm font-bold text-primary">{term.term}</p>
+        )}
         {consolidating && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground shrink-0" />}
       </div>
       {concealed && !revealed ? (
@@ -309,6 +345,7 @@ function GlossaryView({
   onSelectView,
   deletedTerms,
   onDeleteTerm,
+  onRenameTerm,
   focusTerm,
   onFocusTerm,
 }: {
@@ -316,6 +353,7 @@ function GlossaryView({
   onSelectView: (view: TeacherView) => void;
   deletedTerms: string[];
   onDeleteTerm: (term: string) => void;
+  onRenameTerm: (oldTerm: string, newTerm: string) => void;
   focusTerm: string | null;
   onFocusTerm: (term: string) => void;
 }) {
@@ -450,6 +488,7 @@ function GlossaryView({
               term={t}
               onSelectView={onSelectView}
               onDeleteTerm={onDeleteTerm}
+              onRenameTerm={onRenameTerm}
               onFocusTerm={onFocusTerm}
               isFocused={focusTerm?.toLowerCase() === t.term.toLowerCase()}
               concealed={memorizeMode}
@@ -468,6 +507,7 @@ function renderContent(
   onSelectView: (view: TeacherView) => void,
   deletedGlossaryTerms: string[],
   onDeleteGlossaryTerm: (term: string) => void,
+  onRenameGlossaryTerm: (oldTerm: string, newTerm: string) => void,
   glossaryFocusTerm: string | null,
   onFocusGlossaryTerm: (term: string) => void
 ): React.ReactNode {
@@ -480,6 +520,7 @@ function renderContent(
         onSelectView={onSelectView}
         deletedTerms={deletedGlossaryTerms}
         onDeleteTerm={onDeleteGlossaryTerm}
+        onRenameTerm={onRenameGlossaryTerm}
         focusTerm={glossaryFocusTerm}
         onFocusTerm={onFocusGlossaryTerm}
       />
@@ -566,6 +607,7 @@ export default function TeacherPane({
   onSelectView,
   deletedGlossaryTerms = [],
   onDeleteGlossaryTerm = () => {},
+  onRenameGlossaryTerm = () => {},
   glossaryFocusTerm = null,
   onFocusGlossaryTerm = () => {},
 }: TeacherPaneProps) {
@@ -613,7 +655,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

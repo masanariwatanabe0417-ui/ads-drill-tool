@@ -47,6 +47,7 @@ export interface StudyLog {
   courses: CourseData[];
   glossaryOverrides?: Record<string, string>;    // term.toLowerCase() → カスタム定義文
   glossaryManualTerms?: Record<string, string>;  // 表示用term → 定義（手動追加用語）
+  glossaryTermRenames?: Record<string, string>;  // 旧term.toLowerCase() → 修正後の表示用term（読み間違い等の手動修正）
 }
 
 export interface NewTermSuggestion {

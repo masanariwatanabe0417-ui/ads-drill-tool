@@ -167,6 +167,37 @@ export default function DrillTool() {
     );
   }, []);
 
+  // 用語名の手動修正（例: 読みの間違い "API(アピアイ)" → "API(エーピーアイ)"）
+  const handleRenameGlossaryTerm = useCallback((oldTerm: string, newTerm: string) => {
+    const o = oldTerm.trim();
+    const n = newTerm.trim();
+    if (!n || o === n) return;
+    setStudyLog((prev) => {
+      const renames = { ...prev.glossaryTermRenames };
+      // 既存リネームの行き先が旧名のものは新名へ付け替え（A→B のあと B→C なら A→C にする）
+      for (const k of Object.keys(renames)) {
+        if (renames[k] === o) renames[k] = n;
+      }
+      renames[o.toLowerCase()] = n;
+      // 定義上書き・手動追加用語のキーも新名へ引き継ぐ
+      const overrides = { ...prev.glossaryOverrides };
+      const oldDef = overrides[o.toLowerCase()];
+      if (oldDef !== undefined) {
+        delete overrides[o.toLowerCase()];
+        overrides[n.toLowerCase()] = oldDef;
+      }
+      const manual = { ...prev.glossaryManualTerms };
+      const oldManual = manual[o];
+      if (oldManual !== undefined) {
+        delete manual[o];
+        manual[n] = oldManual;
+      }
+      return { ...prev, glossaryTermRenames: renames, glossaryOverrides: overrides, glossaryManualTerms: manual };
+    });
+    // 質問ペインでフォーカス中の用語名も追従させる
+    setGlossaryFocusTerm((cur) => (cur === o ? n : cur));
+  }, []);
+
   const handleAddNewGlossaryTerm = useCallback((entryId: string, term: string, definition: string) => {
     setStudyLog((prev) => ({
       ...prev,
@@ -433,6 +464,7 @@ export default function DrillTool() {
           onSelectView={setTeacherView}
           deletedGlossaryTerms={deletedGlossaryTerms}
           onDeleteGlossaryTerm={handleDeleteGlossaryTerm}
+          onRenameGlossaryTerm={handleRenameGlossaryTerm}
           glossaryFocusTerm={glossaryFocusTerm}
           onFocusGlossaryTerm={handleFocusGlossaryTerm}
         />

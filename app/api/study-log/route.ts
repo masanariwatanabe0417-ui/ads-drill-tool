@@ -26,7 +26,34 @@ function readFromFile() {
 
 function writeToFile(body: unknown) {
   ensureDir();
-  fs.writeFileSync(SAVE_PATH, JSON.stringify(body, null, 2), "utf-8");
+  // 一時ファイル→rename のアトミック書き込み（並行保存時の破損防止）
+  const tmp = `${SAVE_PATH}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(body, null, 2), "utf-8");
+  fs.renameSync(tmp, SAVE_PATH);
+}
+
+// 単語帳の手動編集（定義上書き・手動追加・用語名修正）の辞書フィールド。
+// 保存は studyLog 全置換のため、複数タブ/セッションが開いていると
+// 古いコピーの保存で他方の編集が消える（後勝ち）。これを防ぐため、
+// 辞書フィールドだけは既存データと和集合マージする（同一キーは受信側優先）。
+const GLOSSARY_MAP_KEYS = [
+  "glossaryOverrides",
+  "glossaryManualTerms",
+  "glossaryTermRenames",
+] as const;
+
+function mergeGlossaryMaps(
+  incoming: Record<string, unknown>,
+  existing: Record<string, unknown>
+): Record<string, unknown> {
+  for (const key of GLOSSARY_MAP_KEYS) {
+    const merged = {
+      ...((existing?.[key] as Record<string, string>) ?? {}),
+      ...((incoming?.[key] as Record<string, string>) ?? {}),
+    };
+    if (Object.keys(merged).length > 0) incoming[key] = merged;
+  }
+  return incoming;
 }
 
 // --- Neon(DB)保存（DATABASE_URL があるとき。id=1 の1行に studyLog 全体を JSON で保存） ---
@@ -59,9 +86,16 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     if (hasDatabase) {
-      await writeToDb(body);
+      const existing = await readFromDb().catch(() => EMPTY);
+      await writeToDb(mergeGlossaryMaps(body, existing));
     } else {
-      writeToFile(body);
+      let existing: Record<string, unknown> = EMPTY;
+      try {
+        existing = readFromFile();
+      } catch {
+        // 既存ファイルが壊れている場合は受信データのみで保存
+      }
+      writeToFile(mergeGlossaryMaps(body, existing));
     }
     return NextResponse.json({ ok: true });
   } catch (e) {

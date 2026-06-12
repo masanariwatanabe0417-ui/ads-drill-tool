@@ -76,10 +76,17 @@ export function normalizeForSearch(s: string): string {
 export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
   const map = new Map<string, GlossaryTerm>();
 
+  // 用語名の手動修正（例: "API(アピアイ)" → "API(エーピーアイ)"）。
+  // 解析前に適用するので、修正後の名前で重複統合・ソートされる。
+  const renames = studyLog.glossaryTermRenames ?? {};
+  const applyRename = (t: string): string => renames[t.toLowerCase()] ?? t;
+
   for (const course of studyLog.courses) {
     for (const lesson of course.lessons) {
       for (const q of lesson.questions) {
-        for (const { term, definition } of parseGlossaryLines(q.explanation)) {
+        for (const parsed of parseGlossaryLines(q.explanation)) {
+          const term = applyRename(parsed.term);
+          const definition = parsed.definition;
           const key = dedupeKey(term);
           let entry = map.get(key);
           if (!entry) {
@@ -120,7 +127,8 @@ export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
 
   // 手動追加用語（説明文に登場しないが単語帳に追加されたもの）を補完する
   const manualTerms = studyLog.glossaryManualTerms ?? {};
-  Object.entries(manualTerms).forEach(([term, definition]) => {
+  Object.entries(manualTerms).forEach(([rawTerm, definition]) => {
+    const term = applyRename(rawTerm);
     const key = dedupeKey(term);
     if (!map.has(key)) {
       map.set(key, { term, definitions: [definition], occurrences: [] });
