@@ -14,6 +14,7 @@ import {
   StudyLog,
   TeacherView,
 } from "@/lib/types";
+import { aiFetch } from "@/lib/passcode";
 
 function makeCourseKey(series: string, course: string) {
   return `${series}__${course}`;
@@ -130,7 +131,7 @@ export default function DrillTool() {
       studyLog.glossaryOverrides?.[glossaryFocusTerm.toLowerCase()] ??
       "";
     try {
-      const res = await fetch("/api/question", {
+      const res = await aiFetch("/api/question", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question, glossaryTerm: glossaryFocusTerm, currentDefinition: currentDef }),
@@ -217,7 +218,7 @@ export default function DrillTool() {
       setTeacherView(null);
       setTeacherError(null);
       try {
-        const res = await fetch("/api/teacher", {
+        const res = await aiFetch("/api/teacher", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -328,7 +329,7 @@ export default function DrillTool() {
     async (question: string) => {
       setQuestionLoading(true);
       try {
-        const res = await fetch("/api/question", {
+        const res = await aiFetch("/api/question", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
