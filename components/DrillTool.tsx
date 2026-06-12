@@ -216,6 +216,71 @@ export default function DrillTool() {
     );
   }, []);
 
+  // レッスン／コースまとめの「図解化」。生成中のまとめを示すキー（courseKey or courseKey__lessonName）
+  const [diagramLoadingKey, setDiagramLoadingKey] = useState<string | null>(null);
+
+  const handleGenerateDiagram = useCallback(async (view: TeacherView) => {
+    if (view?.type !== "lesson" && view?.type !== "course") return;
+    const course = studyLogRef.current.courses.find((c) => c.courseKey === view.courseKey);
+    if (!course) return;
+
+    const isLesson = view.type === "lesson";
+    const lesson = isLesson ? course.lessons.find((l) => l.lessonName === view.lessonName) : null;
+    if (isLesson && !lesson) return;
+
+    const key = isLesson ? `${view.courseKey}__${view.lessonName}` : view.courseKey;
+    const payload = isLesson
+      ? {
+          scope: "lesson",
+          title: `${course.courseName} ${lesson!.lessonName}`,
+          sections: [
+            {
+              heading: lesson!.lessonName,
+              points: lesson!.questions.map((q) => q.keyLearning).filter(Boolean),
+            },
+          ],
+        }
+      : {
+          scope: "course",
+          title: `${course.seriesName} ${course.courseName}`,
+          sections: course.lessons.map((l) => ({
+            heading: l.lessonName,
+            points: l.questions.map((q) => q.keyLearning).filter(Boolean),
+          })),
+        };
+
+    setDiagramLoadingKey(key);
+    try {
+      const res = await aiFetch("/api/diagram", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.mermaid) {
+        throw new Error(data.error ?? "図の生成に失敗しました");
+      }
+      setStudyLog((prev) => ({
+        ...prev,
+        courses: prev.courses.map((c) => {
+          if (c.courseKey !== view.courseKey) return c;
+          if (!isLesson) return { ...c, diagram: data.mermaid };
+          return {
+            ...c,
+            lessons: c.lessons.map((l) =>
+              l.lessonName === view.lessonName ? { ...l, diagram: data.mermaid } : l
+            ),
+          };
+        }),
+      }));
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : "図の生成に失敗しました");
+    } finally {
+      setDiagramLoadingKey(null);
+    }
+  }, []);
+
   // 自動取込で読み取った Desktop 上の元ファイルパス。
   // 解説生成が成功した（＝ドリルと確定した）時だけ取込フォルダへ移動・改名する。
   const [importedFiles, setImportedFiles] = useState<Partial<Record<ScreenshotSlot, string>>>({});
@@ -468,6 +533,8 @@ export default function DrillTool() {
           onRenameGlossaryTerm={handleRenameGlossaryTerm}
           glossaryFocusTerm={glossaryFocusTerm}
           onFocusGlossaryTerm={handleFocusGlossaryTerm}
+          diagramLoadingKey={diagramLoadingKey}
+          onGenerateDiagram={handleGenerateDiagram}
         />
       </div>
       <div className="w-80 shrink-0">

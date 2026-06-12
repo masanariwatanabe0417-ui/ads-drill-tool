@@ -34,6 +34,7 @@ export interface QuestionEntry {
 export interface LessonData {
   lessonName: string;
   questions: QuestionEntry[];
+  diagram?: string;      // レッスンまとめの図解（Mermaid記法・「図解化」ボタンで生成）
 }
 
 export interface CourseData {
@@ -41,6 +42,7 @@ export interface CourseData {
   seriesName: string;
   courseName: string;
   lessons: LessonData[];
+  diagram?: string;      // コースまとめの図解（Mermaid記法・「図解化」ボタンで生成）
 }
 
 export interface StudyLog {

@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -24,6 +24,35 @@ interface TeacherPaneProps {
   onRenameGlossaryTerm?: (oldTerm: string, newTerm: string) => void;
   glossaryFocusTerm?: string | null;
   onFocusGlossaryTerm?: (term: string) => void;
+  diagramLoadingKey?: string | null;
+  onGenerateDiagram?: (view: TeacherView) => void;
+}
+
+// ── まとめの図解化ボタン + 図表示 ──────────────────────────────────
+function DiagramButton({
+  diagram,
+  loading,
+  onGenerate,
+}: {
+  diagram?: string;
+  loading: boolean;
+  onGenerate: () => void;
+}) {
+  return (
+    <button
+      onClick={onGenerate}
+      disabled={loading}
+      className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0 disabled:opacity-60"
+      title="学んだ要点の全体像をAIが図にします"
+    >
+      {loading ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Network className="h-3.5 w-3.5" />
+      )}
+      {loading ? "図を生成中..." : diagram ? "図解を再生成" : "図解化"}
+    </button>
+  );
 }
 
 const markdownComponents: Components = {
@@ -521,7 +550,9 @@ function renderContent(
   onDeleteGlossaryTerm: (term: string) => void,
   onRenameGlossaryTerm: (oldTerm: string, newTerm: string) => void,
   glossaryFocusTerm: string | null,
-  onFocusGlossaryTerm: (term: string) => void
+  onFocusGlossaryTerm: (term: string) => void,
+  diagramLoadingKey: string | null,
+  onGenerateDiagram: (view: TeacherView) => void
 ): React.ReactNode {
   if (!teacherView) return null;
 
@@ -559,10 +590,18 @@ function renderContent(
     if (!lesson) return null;
     return (
       <div className="space-y-4">
-        <div>
-          <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
-          <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
+            <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
+          </div>
+          <DiagramButton
+            diagram={lesson.diagram}
+            loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
+            onGenerate={() => onGenerateDiagram(teacherView)}
+          />
         </div>
+        {lesson.diagram && <MermaidDiagram code={lesson.diagram} />}
         <div className="space-y-3">
           {lesson.questions.map((q) => (
             <div key={q.questionInfo} className="border rounded-lg p-3 space-y-1">
@@ -581,12 +620,20 @@ function renderContent(
     const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
     return (
       <div className="space-y-5">
-        <div>
-          <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
-          </p>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
+            <p className="text-xs text-muted-foreground mt-1">
+              {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
+            </p>
+          </div>
+          <DiagramButton
+            diagram={course.diagram}
+            loading={diagramLoadingKey === teacherView.courseKey}
+            onGenerate={() => onGenerateDiagram(teacherView)}
+          />
         </div>
+        {course.diagram && <MermaidDiagram code={course.diagram} />}
         {course.lessons.map((lesson) => (
           <div key={lesson.lessonName} className="space-y-2">
             <h3 className="text-sm font-semibold text-foreground border-b pb-1">
@@ -622,6 +669,8 @@ export default function TeacherPane({
   onRenameGlossaryTerm = () => {},
   glossaryFocusTerm = null,
   onFocusGlossaryTerm = () => {},
+  diagramLoadingKey = null,
+  onGenerateDiagram = () => {},
 }: TeacherPaneProps) {
   const viewLabel =
     teacherView?.type === "course"
@@ -667,7 +716,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, diagramLoadingKey, onGenerateDiagram)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

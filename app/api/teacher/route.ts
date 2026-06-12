@@ -201,77 +201,6 @@ async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean
   return composeExplanation(parsed);
 }
 
-// Agent④: 概念のMermaid図解を生成（haiku - 図解特化）
-// 図解に向かない問題（単純な暗記・定義のみ等）は applicable=false でスキップする。
-// 図はMarkdownのmermaidコードブロックとして解説末尾に合成するため保存形式は変わらない。
-async function generateDiagram(imageBlocks: ImageBlock[]) {
-  try {
-    const message = await client.beta.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 1024,
-      output_config: {
-        format: {
-          type: "json_schema",
-          schema: {
-            type: "object",
-            properties: {
-              applicable: {
-                type: "boolean",
-                description: "この問題の核心が図で表せるならtrue。図にしても情報が増えない単純な定義・暗記問題ならfalse",
-              },
-              mermaid: {
-                type: "string",
-                description: "Mermaid記法の図。applicableがfalseなら空文字",
-              },
-            },
-            required: ["applicable", "mermaid"],
-            additionalProperties: false,
-          },
-        },
-      },
-      messages: [
-        {
-          role: "user",
-          content: [
-            ...imageBlocks,
-            {
-              type: "text",
-              text: `あなたは概念を図解するのが得意な先輩社員です。
-このドリル問題の核心となる概念・関係・流れを、初学者がひと目で理解できるMermaid図にしてください。
-
-Mermaid記法の厳守ルール（構文エラーで表示できなくなるため必ず守る）：
-- 1行目は flowchart TD または flowchart LR のみ
-- ノードは必ず id["ラベル"] の形式（ラベルはダブルクォートで囲む）
-- ラベル内にダブルクォートは使わない
-- 矢印は --> または -->|"ラベル"| のみ
-- subgraph を使う場合は subgraph id["タイトル"] ... end の形式
-- スタイル指定・class・click は使わない
-- ノード数は3〜8個に収める
-
-内容ルール：
-- 図は問題の「なぜそれが正解か」の理解を助けるものにする
-- 英語・コード用語にはカタカナを括弧で補足（例：branch(ブランチ)）
-- 図にしても理解が深まらない問題（用語の定義を答えるだけ等）は applicable を false にする`,
-            },
-          ],
-        },
-      ],
-    });
-    const block = message.content.find((b) => b.type === "text");
-    const raw = block && block.type === "text" ? block.text : "{}";
-    const parsed = parseLooseJson(raw);
-    if (!parsed || parsed.applicable !== true || typeof parsed.mermaid !== "string") return null;
-    const mermaid = parsed.mermaid.trim();
-    // 最低限の妥当性チェック：flowchart宣言で始まらないものは捨てる
-    if (!/^flowchart\s+(TD|LR|TB|RL|BT)\b/.test(mermaid)) return null;
-    return mermaid;
-  } catch (error) {
-    // 図解は補助要素なので失敗しても解説生成全体は止めない
-    console.error("Diagram agent error:", error);
-    return null;
-  }
-}
-
 export async function POST(req: Request) {
   try {
     const { questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl } = await req.json();
@@ -283,17 +212,15 @@ export async function POST(req: Request) {
     // glossary・explanation: 問題 + 解答のみ（コースマップ不要）
     const qaBlocks = buildImageBlocks(questionImageDataUrl, answerImageDataUrl);
 
-    // 4エージェント並列実行
-    const [lessonInfo, glossary, explanationData, diagram] = await Promise.all([
+    // 3エージェント並列実行
+    const [lessonInfo, glossary, explanationData] = await Promise.all([
       extractLessonInfo(questionImageDataUrl, courseMapImageDataUrl),
       generateGlossary(qaBlocks),
       generateExplanation(qaBlocks, !!answerImageDataUrl),
-      generateDiagram(qaBlocks),
     ]);
 
-    // 用語解説 + 解説本文 + 図解をマージ
-    const diagramSection = diagram ? `\n\n## 図解\n\`\`\`mermaid\n${diagram}\n\`\`\`` : "";
-    const explanation = `${glossary}\n\n${explanationData.mainContent ?? ""}${diagramSection}`.trim();
+    // 用語解説 + 解説本文をマージ
+    const explanation = `${glossary}\n\n${explanationData.mainContent ?? ""}`.trim();
 
     return Response.json({
       lessonInfo: lessonInfo ?? { series: "不明", course: "不明", lesson: "不明", questionInfo: "Q?" },
