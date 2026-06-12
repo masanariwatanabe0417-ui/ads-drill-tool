@@ -8,7 +8,8 @@ import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary"
 import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, isValidElement } from "react";
+import MermaidDiagram from "@/components/MermaidDiagram";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -40,6 +41,9 @@ const markdownComponents: Components = {
     <strong className="font-semibold text-foreground">{children}</strong>
   ),
   code: ({ children, className }) => {
+    if (className === "language-mermaid") {
+      return <MermaidDiagram code={String(children).trim()} />;
+    }
     const isBlock = className?.startsWith("language-");
     if (isBlock) {
       return (
@@ -54,9 +58,16 @@ const markdownComponents: Components = {
       </code>
     );
   },
-  pre: ({ children }) => (
-    <pre className="bg-slate-100 rounded p-3 overflow-x-auto my-2">{children}</pre>
-  ),
+  pre: ({ children }) => {
+    // mermaidブロックはMermaidDiagramが描画するため<pre>の装飾を付けない
+    if (
+      isValidElement(children) &&
+      (children.props as { className?: string }).className === "language-mermaid"
+    ) {
+      return <>{children}</>;
+    }
+    return <pre className="bg-slate-100 rounded p-3 overflow-x-auto my-2">{children}</pre>;
+  },
   ul: ({ children }) => (
     <ul className="space-y-1 my-2 pl-4 list-disc">{children}</ul>
   ),
