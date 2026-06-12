@@ -5,6 +5,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
 import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary";
+import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { useEffect, useRef, useState } from "react";
@@ -233,7 +234,7 @@ function GlossaryCard({
     didRun.current = true;
 
     setConsolidating(true);
-    fetch("/api/glossary-consolidate", {
+    aiFetch("/api/glossary-consolidate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ term: term.term, definitions: term.definitions }),
