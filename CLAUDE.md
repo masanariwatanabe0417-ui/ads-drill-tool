@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: school-deploy-experiment / コミット: 2a541bb / 状態: ✅ クリーン
-- 最終作業: NEXT_TASKS: ⑤Vercelデプロイの手順を具体化・git名義設定済みを補足
-- 次候補: ★最優先（スクール課題の続き）: ステップ⑤Vercelデプロイのみ残り。②Neon作成(シンガポール・PG18)✅ ③DATABASE_URLを.env.localに設定✅ ④リロードで消えない確認✅（既存6コースをDBへ移行済み。旧ファイルは~/Desktop/AIドリル取込済み/studyLog.json.backupに退避）。⑤の手順: vercel.com/signupにGoogleでサインアップ（Hobby無料プラン） → GitHubリポジトリads-drill-toolをインポート（ブランチschool-deploy-experiment） → 環境変数DATABASE_URLとANTHROPIC_API_KEYを設定（値は.env.localからコピー） → デプロイ → 公開URLで動作確認。完成後mainで本当の最適化に戻る方針。※補足: git名義をGitHub noreplyに設定済み（コミット警告は出なくなった）。Neonコンソールが壊れたらChrome自動翻訳をオフにする。 A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
+- ブランチ: school-deploy-experiment / コミット: fcf5ec9 / 状態: ✅ クリーン
+- 最終作業: NEXT_TASKS: スクール課題⑤Vercelデプロイ完了。公開URLと修正内容を記録
+- 次候補: ★スクール課題①〜⑤すべて完了🎉 ⑤Vercelデプロイ完了（2026-06-13）: 公開URL https://ads-drill-tool.vercel.app ／Vercelプロジェクトads-drill-tool（チームmaru's projects・Hobby）／Productionブランチ=school-deploy-experiment／環境変数DATABASE_URL・ANTHROPIC_API_KEY設定済み／DBから6コース配信確認済み。デプロイ失敗の原因は2つ修正: (1)古いpnpm-lock.yamlでERR_PNPM_OUTDATED_LOCKFILE→pnpm関連ファイル削除しnpmに一本化 (2)watch-screenshots/study-logにforce-dynamic追加。今後はschool-deploy-experimentにpushすると自動で本番デプロイされる。次の方針: mainに戻って本当の最適化（school-deploy-experimentをmainにマージするか要検討）。 ⚠️ 新規の注意: 公開URLは認証なしで誰でもアクセス可能＝先生ペインのAI解説を他人が使うとANTHROPIC_API_KEYの課金が発生しうる。対策候補: Vercel Deployment Protection / 簡易パスワード / D.リポジトリprivate化とあわせて検討 A. 先生ペインの図解化（Mermaid等・新エージェント追加） B. 単語帳の改良（コース別フィルタ・検索ボックス・暗記モード） C. ストリーミング対応（解説を逐次表示） D. リポジトリのprivate化 
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
