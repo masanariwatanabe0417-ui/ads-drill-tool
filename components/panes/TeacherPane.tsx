@@ -10,6 +10,7 @@ import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
 import { useEffect, useRef, useState, isValidElement } from "react";
 import MermaidDiagram from "@/components/MermaidDiagram";
+import HtmlDiagram from "@/components/HtmlDiagram";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -30,11 +31,11 @@ interface TeacherPaneProps {
 
 // ── まとめの図解化ボタン + 図表示 ──────────────────────────────────
 function DiagramButton({
-  diagram,
+  hasDiagram,
   loading,
   onGenerate,
 }: {
-  diagram?: string;
+  hasDiagram?: boolean;
   loading: boolean;
   onGenerate: () => void;
 }) {
@@ -50,7 +51,7 @@ function DiagramButton({
       ) : (
         <Network className="h-3.5 w-3.5" />
       )}
-      {loading ? "図を生成中..." : diagram ? "図解を再生成" : "図解化"}
+      {loading ? "図を生成中..." : hasDiagram ? "図解を再生成" : "図解化"}
     </button>
   );
 }
@@ -596,12 +597,16 @@ function renderContent(
             <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
           </div>
           <DiagramButton
-            diagram={lesson.diagram}
+            hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
             loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
             onGenerate={() => onGenerateDiagram(teacherView)}
           />
         </div>
-        {lesson.diagram && <MermaidDiagram code={lesson.diagram} />}
+        {lesson.diagramHtml ? (
+          <HtmlDiagram html={lesson.diagramHtml} />
+        ) : (
+          lesson.diagram && <MermaidDiagram code={lesson.diagram} />
+        )}
         <div className="space-y-3">
           {lesson.questions.map((q) => (
             <div key={q.questionInfo} className="border rounded-lg p-3 space-y-1">
@@ -628,12 +633,16 @@ function renderContent(
             </p>
           </div>
           <DiagramButton
-            diagram={course.diagram}
+            hasDiagram={!!(course.diagramHtml || course.diagram)}
             loading={diagramLoadingKey === teacherView.courseKey}
             onGenerate={() => onGenerateDiagram(teacherView)}
           />
         </div>
-        {course.diagram && <MermaidDiagram code={course.diagram} />}
+        {course.diagramHtml ? (
+          <HtmlDiagram html={course.diagramHtml} />
+        ) : (
+          course.diagram && <MermaidDiagram code={course.diagram} />
+        )}
         {course.lessons.map((lesson) => (
           <div key={lesson.lessonName} className="space-y-2">
             <h3 className="text-sm font-semibold text-foreground border-b pb-1">

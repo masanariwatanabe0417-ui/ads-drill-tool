@@ -257,18 +257,18 @@ export default function DrillTool() {
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok || !data.mermaid) {
+      if (!res.ok || !data.html) {
         throw new Error(data.error ?? "図の生成に失敗しました");
       }
       setStudyLog((prev) => ({
         ...prev,
         courses: prev.courses.map((c) => {
           if (c.courseKey !== view.courseKey) return c;
-          if (!isLesson) return { ...c, diagram: data.mermaid };
+          if (!isLesson) return { ...c, diagramHtml: data.html };
           return {
             ...c,
             lessons: c.lessons.map((l) =>
-              l.lessonName === view.lessonName ? { ...l, diagram: data.mermaid } : l
+              l.lessonName === view.lessonName ? { ...l, diagramHtml: data.html } : l
             ),
           };
         }),
