@@ -11,6 +11,7 @@ import type { Components } from "react-markdown";
 import { useEffect, useRef, useState, isValidElement } from "react";
 import MermaidDiagram from "@/components/MermaidDiagram";
 import HtmlDiagram from "@/components/HtmlDiagram";
+import AudioSummary from "@/components/AudioSummary";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -596,11 +597,19 @@ function renderContent(
             <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
             <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
           </div>
-          <DiagramButton
-            hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
-            loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
-            onGenerate={() => onGenerateDiagram(teacherView)}
-          />
+          <div className="flex items-center gap-1.5 shrink-0">
+            <AudioSummary
+              text={[
+                `${lesson.lessonName} のまとめです。`,
+                ...lesson.questions.map((q, i) => `ポイント${i + 1}。${q.keyLearning}`),
+              ].join("\n")}
+            />
+            <DiagramButton
+              hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
+              loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
+              onGenerate={() => onGenerateDiagram(teacherView)}
+            />
+          </div>
         </div>
         {lesson.diagramHtml ? (
           <HtmlDiagram html={lesson.diagramHtml} />
@@ -632,11 +641,22 @@ function renderContent(
               {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
             </p>
           </div>
-          <DiagramButton
-            hasDiagram={!!(course.diagramHtml || course.diagram)}
-            loading={diagramLoadingKey === teacherView.courseKey}
-            onGenerate={() => onGenerateDiagram(teacherView)}
-          />
+          <div className="flex items-center gap-1.5 shrink-0">
+            <AudioSummary
+              text={[
+                `${course.courseName} のまとめです。`,
+                ...course.lessons.flatMap((l) => [
+                  `${l.lessonName}。`,
+                  ...l.questions.map((q) => q.keyLearning),
+                ]),
+              ].join("\n")}
+            />
+            <DiagramButton
+              hasDiagram={!!(course.diagramHtml || course.diagram)}
+              loading={diagramLoadingKey === teacherView.courseKey}
+              onGenerate={() => onGenerateDiagram(teacherView)}
+            />
+          </div>
         </div>
         {course.diagramHtml ? (
           <HtmlDiagram html={course.diagramHtml} />
