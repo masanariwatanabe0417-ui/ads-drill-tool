@@ -314,6 +314,13 @@ export default function DrillTool() {
       setTeacherView(null);
       setTeacherError(null);
       try {
+        // 既存の登録済みコース/レッスン名をAPIに渡し、OCRのブレ（同じコース名の漢字を
+        // 毎回違う字に誤読する）で別コースに分裂するのを防ぐ。一致するなら既存名をそのまま再利用させる。
+        const knownCourses = studyLogRef.current.courses.map((c) => ({
+          series: c.seriesName,
+          course: c.courseName,
+          lessons: c.lessons.map((l) => l.lessonName),
+        }));
         const res = await aiFetch("/api/teacher", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -321,6 +328,7 @@ export default function DrillTool() {
             questionImageDataUrl: newScreenshots.questionImage,
             answerImageDataUrl: newScreenshots.answerImage,
             courseMapImageDataUrl: newScreenshots.courseMapImage,
+            knownCourses,
           }),
         });
         if (!res.ok) {

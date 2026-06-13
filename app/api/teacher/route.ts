@@ -17,8 +17,15 @@ function buildImageBlocks(
   ];
 }
 
+// クライアントから渡される既存コース一覧の型（OCRブレ防止のアンカーに使う）
+type KnownCourse = { series: string; course: string; lessons: string[] };
+
 // Agent①: スクリーンショットからレッスン情報を抽出（haiku - 高速）
-async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDataUrl?: string) {
+async function extractLessonInfo(
+  questionImageDataUrl: string,
+  courseMapImageDataUrl?: string,
+  knownCourses?: KnownCourse[]
+) {
   const content: Anthropic.MessageParam["content"] = [];
 
   if (courseMapImageDataUrl) {
@@ -27,6 +34,22 @@ async function extractLessonInfo(questionImageDataUrl: string, courseMapImageDat
   }
   content.push({ type: "text", text: "【問題画像】（問題番号「Q数字」を読み取ってください）" });
   content.push(buildImageBlock(questionImageDataUrl));
+
+  // 既存コース一覧があれば、OCRのブレで別コースに分裂しないよう「一致したら既存名をそのまま使う」よう指示。
+  // haikuはコース名の漢字（例：壊→棲→襲）を毎回違う字に誤読することがあり、これで正しい名前に寄せる。
+  if (knownCourses && knownCourses.length > 0) {
+    const list = knownCourses
+      .map((c) => `- シリーズ「${c.series}」/ コース「${c.course}」/ レッスン: ${c.lessons.join(" 、 ")}`)
+      .join("\n");
+    content.push({
+      type: "text",
+      text: `【登録済みコース一覧】（過去に読み取り済みの正しい名前）:
+${list}
+
+重要: コースマップのシリーズ名・コース名・レッスン名が上の一覧のいずれかと同じものを指していると判断できる場合は、画像から読み取り直さず、一覧に書かれた文字列をそのまま完全コピーして返してください（漢字の細かな差異は一覧側を正とする）。一覧に該当が無い新規のコース/レッスンのときだけ、画像から新しく読み取ってください。`,
+    });
+  }
+
   content.push({
     type: "text",
     text: `上の画像から情報を読み取り、以下のJSON形式のみで返してください（他のテキストは含めない）：
@@ -203,7 +226,7 @@ async function generateExplanation(imageBlocks: ImageBlock[], hasAnswer: boolean
 
 export async function POST(req: Request) {
   try {
-    const { questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl } = await req.json();
+    const { questionImageDataUrl, answerImageDataUrl, courseMapImageDataUrl, knownCourses } = await req.json();
 
     if (!questionImageDataUrl) {
       return Response.json({ error: "問題のスクリーンショットが必要です" }, { status: 400 });
@@ -214,7 +237,7 @@ export async function POST(req: Request) {
 
     // 3エージェント並列実行
     const [lessonInfo, glossary, explanationData] = await Promise.all([
-      extractLessonInfo(questionImageDataUrl, courseMapImageDataUrl),
+      extractLessonInfo(questionImageDataUrl, courseMapImageDataUrl, knownCourses),
       generateGlossary(qaBlocks),
       generateExplanation(qaBlocks, !!answerImageDataUrl),
     ]);
