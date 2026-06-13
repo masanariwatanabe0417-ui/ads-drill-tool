@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap } from "lucide-react";
+import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap, Pencil } from "lucide-react";
 import { StudyLog, TeacherView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -10,11 +10,29 @@ interface NavigationPaneProps {
   studyLog: StudyLog;
   teacherView: TeacherView;
   onSelectView: (view: TeacherView) => void;
+  // Q番号の手動修正（AIの読み取り誤りを直す）。courseKey/lessonName/旧Q番号/入力値 を渡す。
+  onRenameQuestion: (courseKey: string, lessonName: string, oldQ: string, rawNew: string) => void;
 }
 
-export default function NavigationPane({ studyLog, teacherView, onSelectView }: NavigationPaneProps) {
+// 編集中のQを一意に指すキー
+type EditTarget = { courseKey: string; lessonName: string; oldQ: string };
+
+export default function NavigationPane({ studyLog, teacherView, onSelectView, onRenameQuestion }: NavigationPaneProps) {
   const [expandedCourses, setExpandedCourses] = useState<Set<string>>(new Set());
   const [expandedLessons, setExpandedLessons] = useState<Set<string>>(new Set());
+  const [editing, setEditing] = useState<EditTarget | null>(null);
+  const [editValue, setEditValue] = useState("");
+
+  const startEdit = (t: EditTarget) => {
+    setEditing(t);
+    setEditValue(t.oldQ.replace(/\D/g, "")); // 数字部分だけ入れておく（例：「6」）
+  };
+  const commitEdit = () => {
+    if (editing) onRenameQuestion(editing.courseKey, editing.lessonName, editing.oldQ, editValue);
+    setEditing(null);
+  };
+  const isEditing = (t: EditTarget) =>
+    editing?.courseKey === t.courseKey && editing.lessonName === t.lessonName && editing.oldQ === t.oldQ;
 
   // スクショ貼り付け後、新しいQが追加されたら自動展開
   useEffect(() => {
@@ -184,23 +202,61 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView }: 
                                     lessonName: lesson.lessonName,
                                     questionInfo: q.questionInfo,
                                   };
-                                  return (
-                                    <button
-                                      key={q.questionInfo}
-                                      onClick={() => onSelectView(qView)}
-                                      className={cn(
-                                        "w-full flex items-start gap-1.5 px-2 py-1.5 rounded-md text-left transition-colors",
-                                        isActive(qView)
-                                          ? "bg-primary text-primary-foreground"
-                                          : "hover:bg-accent"
-                                      )}
-                                    >
-                                      <FileText className="h-3 w-3 shrink-0 mt-0.5" />
-                                      <div className="min-w-0">
-                                        <p className="text-xs font-medium">{q.questionInfo}</p>
-                                        <p className="text-xs opacity-70 line-clamp-2">{q.keyLearning}</p>
+                                  const target: EditTarget = {
+                                    courseKey: course.courseKey,
+                                    lessonName: lesson.lessonName,
+                                    oldQ: q.questionInfo,
+                                  };
+                                  if (isEditing(target)) {
+                                    return (
+                                      <div
+                                        key={q.questionInfo}
+                                        className="flex items-center gap-1 px-2 py-1.5"
+                                      >
+                                        <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                                        <span className="text-xs text-muted-foreground">Q</span>
+                                        <input
+                                          autoFocus
+                                          type="text"
+                                          inputMode="numeric"
+                                          value={editValue}
+                                          onChange={(e) => setEditValue(e.target.value)}
+                                          onKeyDown={(e) => {
+                                            if (e.key === "Enter") commitEdit();
+                                            else if (e.key === "Escape") setEditing(null);
+                                          }}
+                                          onBlur={commitEdit}
+                                          className="w-12 text-xs border rounded px-1 py-0.5 bg-background"
+                                        />
+                                        <span className="text-[10px] text-muted-foreground">Enterで確定</span>
                                       </div>
-                                    </button>
+                                    );
+                                  }
+                                  return (
+                                    <div key={q.questionInfo} className="group flex items-start">
+                                      <button
+                                        onClick={() => onSelectView(qView)}
+                                        className={cn(
+                                          "flex-1 min-w-0 flex items-start gap-1.5 px-2 py-1.5 rounded-md text-left transition-colors",
+                                          isActive(qView)
+                                            ? "bg-primary text-primary-foreground"
+                                            : "hover:bg-accent"
+                                        )}
+                                      >
+                                        <FileText className="h-3 w-3 shrink-0 mt-0.5" />
+                                        <div className="min-w-0">
+                                          <p className="text-xs font-medium">{q.questionInfo}</p>
+                                          <p className="text-xs opacity-70 line-clamp-2">{q.keyLearning}</p>
+                                        </div>
+                                      </button>
+                                      <button
+                                        onClick={(e) => { e.stopPropagation(); startEdit(target); }}
+                                        title="Q番号を修正"
+                                        className="p-1 mt-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-accent shrink-0"
+                                      >
+                                        <Pencil className="h-3 w-3 text-muted-foreground" />
+                                      </button>
+                                    </div>
                                   );
                                 })}
                               </div>

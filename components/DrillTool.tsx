@@ -307,6 +307,55 @@ export default function DrillTool() {
     }).catch(() => {});
   }, [studyLog]);
 
+  // ナビからのQ番号修正（AIの読み取り誤り＝例：Q6をQ8と誤読 を手で直す）。
+  // studyLogのラベルを更新するだけ。スクショの保存ファイルとは独立しているので影響しない。
+  const renameQuestion = useCallback(
+    (courseKey: string, lessonName: string, oldQ: string, rawNew: string) => {
+      const digits = rawNew.replace(/\D/g, "");
+      if (!digits) return;
+      const newQ = `Q${parseInt(digits, 10)}`;
+      if (newQ === oldQ) return;
+      const lesson = studyLogRef.current.courses
+        .find((c) => c.courseKey === courseKey)
+        ?.lessons.find((l) => l.lessonName === lessonName);
+      // 対象が見つからない（blur二重発火等で既に改名済み）なら静かに何もしない
+      if (!lesson?.questions.some((q) => q.questionInfo === oldQ)) return;
+      if (lesson.questions.some((q) => q.questionInfo === newQ)) {
+        alert(`${newQ} はこのレッスンに既にあります。先に重複しない番号へ調整してください。`);
+        return;
+      }
+      setStudyLog((prev) => ({
+        ...prev,
+        courses: prev.courses.map((c) => {
+          if (c.courseKey !== courseKey) return c;
+          return {
+            ...c,
+            lessons: c.lessons.map((l) => {
+              if (l.lessonName !== lessonName) return l;
+              const questions = l.questions
+                .map((q) => (q.questionInfo === oldQ ? { ...q, questionInfo: newQ } : q))
+                .sort((a, b) => {
+                  const n = (s: string) => parseInt(s.replace(/\D/g, ""), 10) || 0;
+                  return n(a.questionInfo) - n(b.questionInfo);
+                });
+              return { ...l, questions };
+            }),
+          };
+        }),
+      }));
+      // 今その問題を表示中なら表示も追従させる
+      setTeacherView((v) =>
+        v?.type === "question" &&
+        v.courseKey === courseKey &&
+        v.lessonName === lessonName &&
+        v.questionInfo === oldQ
+          ? { ...v, questionInfo: newQ }
+          : v
+      );
+    },
+    []
+  );
+
   const fetchTeacherExplanation = useCallback(
     async (newScreenshots: DrillScreenshots) => {
       if (!newScreenshots.questionImage) return;
@@ -514,6 +563,7 @@ export default function DrillTool() {
           studyLog={studyLog}
           teacherView={teacherView}
           onSelectView={setTeacherView}
+          onRenameQuestion={renameQuestion}
         />
       </div>
       <div className="w-72 shrink-0">
