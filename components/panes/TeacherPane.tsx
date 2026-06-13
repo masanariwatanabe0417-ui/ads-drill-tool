@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -42,7 +42,7 @@ function DiagramButton({
     <button
       onClick={onGenerate}
       disabled={loading}
-      className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0 disabled:opacity-60"
+      className="inline-flex items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition-colors shrink-0 disabled:opacity-60 print:hidden"
       title="学んだ要点の全体像をAIが図にします"
     >
       {loading ? (
@@ -589,7 +589,7 @@ function renderContent(
     const lesson = course?.lessons.find((l) => l.lessonName === teacherView.lessonName);
     if (!lesson) return null;
     return (
-      <div className="space-y-4">
+      <div id="teacher-print-area" className="space-y-4">
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
@@ -619,7 +619,7 @@ function renderContent(
     if (!course) return null;
     const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
     return (
-      <div className="space-y-5">
+      <div id="teacher-print-area" className="space-y-5">
         <div className="flex items-start justify-between gap-2">
           <div>
             <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
@@ -683,6 +683,38 @@ export default function TeacherPane({
       ? teacherView.questionInfo
       : null;
 
+  // PDF出力はレッスン/コースまとめ表示時のみ
+  const printable = teacherView?.type === "lesson" || teacherView?.type === "course";
+  const printTitle = (() => {
+    if (teacherView?.type === "lesson") return `${teacherView.lessonName}_まとめ`;
+    if (teacherView?.type === "course") {
+      const c = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
+      return `${c?.courseName ?? "コース"}_まとめ`;
+    }
+    return "まとめ";
+  })();
+
+  // まとめ領域をbody直下にクローンして印刷する（4ペイン/スクロールのレイアウトに
+  // 干渉されず全幅で出力するため）。ブラウザの「PDFに保存」でPDF化できる。
+  const handlePrint = () => {
+    const src = document.getElementById("teacher-print-area");
+    if (!src) return;
+    const clone = src.cloneNode(true) as HTMLElement;
+    clone.id = "print-clone";
+    document.body.appendChild(clone);
+    document.body.classList.add("printing");
+    const prevTitle = document.title;
+    document.title = printTitle; // 保存PDFの既定ファイル名になる
+    const cleanup = () => {
+      clone.remove();
+      document.body.classList.remove("printing");
+      document.title = prevTitle;
+      window.removeEventListener("afterprint", cleanup);
+    };
+    window.addEventListener("afterprint", cleanup);
+    window.print();
+  };
+
   return (
     <div className="flex flex-col h-full border-r">
       <div className="p-3 border-b flex items-center justify-between gap-2">
@@ -695,11 +727,23 @@ export default function TeacherPane({
             <Badge variant="outline" className="text-xs shrink-0">{viewLabel}</Badge>
           )}
         </div>
-        {currentLessonInfo && (
-          <p className="text-xs text-muted-foreground truncate hidden sm:block">
-            {currentLessonInfo.series} › {currentLessonInfo.course}
-          </p>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {currentLessonInfo && (
+            <p className="text-xs text-muted-foreground truncate hidden sm:block">
+              {currentLessonInfo.series} › {currentLessonInfo.course}
+            </p>
+          )}
+          {printable && (
+            <button
+              onClick={handlePrint}
+              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
+              title="このまとめをPDFで保存（印刷ダイアログで「PDFに保存」を選択）"
+            >
+              <FileDown className="h-3.5 w-3.5" />
+              PDFで保存
+            </button>
+          )}
+        </div>
       </div>
 
       <ScrollArea className="flex-1">

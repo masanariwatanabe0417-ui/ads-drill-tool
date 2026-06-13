@@ -42,3 +42,24 @@
     text-wrap: balance;
   }
 }
+
+/* ── PDF出力（先生ペインのまとめ）─────────────────────────────
+   handlePrint が #teacher-print-area を body 直下に #print-clone として
+   複製し、body.printing を付けて window.print() する。印刷時はクローン
+   だけを表示することで、4ペイン/スクロールのレイアウトに干渉されず全幅で出る。
+   ボタン類は Tailwind の print:hidden で非表示。 */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  body.printing > *:not(#print-clone) {
+    display: none !important;
+  }
+  #print-clone {
+    display: block !important;
+    padding: 0 !important;
+    /* 図解の色やバッジを印刷に反映させる */
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
