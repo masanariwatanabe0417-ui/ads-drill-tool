@@ -685,11 +685,12 @@ export default function TeacherPane({
 
   // PDF出力はレッスン/コースまとめ表示時のみ
   const printable = teacherView?.type === "lesson" || teacherView?.type === "course";
+  // 保存PDFの既定ファイル名。レッスンまとめ=レッスン名、コースまとめ=コース名。
   const printTitle = (() => {
-    if (teacherView?.type === "lesson") return `${teacherView.lessonName}_まとめ`;
+    if (teacherView?.type === "lesson") return teacherView.lessonName;
     if (teacherView?.type === "course") {
       const c = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
-      return `${c?.courseName ?? "コース"}_まとめ`;
+      return c?.courseName ?? "コース";
     }
     return "まとめ";
   })();
