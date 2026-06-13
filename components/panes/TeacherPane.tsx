@@ -12,6 +12,7 @@ import { useEffect, useRef, useState, isValidElement } from "react";
 import MermaidDiagram from "@/components/MermaidDiagram";
 import HtmlDiagram from "@/components/HtmlDiagram";
 import AudioSummary from "@/components/AudioSummary";
+import NotebookLmExport from "@/components/NotebookLmExport";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -598,6 +599,19 @@ function renderContent(
             <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <NotebookLmExport
+              notebookName={`AIドリル｜${course?.courseName ?? ""}｜${lesson.lessonName}`}
+              sourceText={[
+                `AIドリル 学習まとめ`,
+                `コース: ${course?.courseName ?? ""}（${course?.seriesName ?? ""}）`,
+                `レッスン: ${lesson.lessonName}`,
+                `学習した問題数: ${lesson.questions.length}問`,
+                ``,
+                `■ このレッスンで学んだ要点`,
+                ``,
+                ...lesson.questions.map((q) => `【${q.questionInfo}】${q.keyLearning}`),
+              ].join("\n")}
+            />
             <AudioSummary
               text={[
                 `${lesson.lessonName} のまとめです。`,
@@ -642,6 +656,22 @@ function renderContent(
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
+            <NotebookLmExport
+              notebookName={`AIドリル｜${course.courseName}（コース全体）`}
+              sourceText={[
+                `AIドリル 学習まとめ`,
+                `シリーズ: ${course.seriesName}`,
+                `コース: ${course.courseName}`,
+                `レッスン数: ${course.lessons.length} / 学習した問題数: ${totalQ}問`,
+                ``,
+                `■ コース全体で学んだ要点`,
+                ...course.lessons.flatMap((l) => [
+                  ``,
+                  `▼ ${l.lessonName}`,
+                  ...l.questions.map((q) => `【${q.questionInfo}】${q.keyLearning}`),
+                ]),
+              ].join("\n")}
+            />
             <AudioSummary
               text={[
                 `${course.courseName} のまとめです。`,
