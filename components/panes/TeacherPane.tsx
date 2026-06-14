@@ -31,6 +31,8 @@ interface TeacherPaneProps {
   onFocusGlossaryTerm?: (term: string) => void;
   diagramLoadingKey?: string | null;
   onGenerateDiagram?: (view: TeacherView) => void;
+  overviewLoadingKey?: string | null;
+  onRegenerateOverview?: (courseKey: string) => void;
 }
 
 // ── まとめの図解化ボタン + 図表示 ──────────────────────────────────
@@ -57,6 +59,51 @@ function DiagramButton({
       )}
       {loading ? "図を生成中..." : hasDiagram ? "図解を再生成" : "図解化"}
     </button>
+  );
+}
+
+// ── コースまとめの「総括」（Sonnet）ブロック ──────────────────────
+// コースまとめを開くと自動生成され、各問のkeyLearningを統合した「コースの幹」を
+// まとめの最上部に表示する。生成中はスピナー、生成済みは本文＋小さな再生成ボタン。
+function OverviewBlock({
+  text,
+  loading,
+  onRegenerate,
+}: {
+  text?: string;
+  loading: boolean;
+  onRegenerate: () => void;
+}) {
+  if (loading && !text) {
+    return (
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-center gap-2 text-sm text-amber-800">
+        <Loader2 className="h-4 w-4 animate-spin shrink-0" />
+        コースの総括を作成中...
+      </div>
+    );
+  }
+  if (!text) return null;
+  return (
+    <div className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
+      <div className="flex items-start justify-between gap-2 mb-1">
+        <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
+          <Sparkles className="h-3.5 w-3.5" />
+          コースの総括
+        </p>
+        <button
+          onClick={onRegenerate}
+          disabled={loading}
+          className="inline-flex items-center gap-1 text-[11px] text-amber-700 hover:text-amber-900 disabled:opacity-60 print:hidden shrink-0"
+          title="総括をもう一度作り直します"
+        >
+          {loading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Network className="h-3 w-3" />}
+          {loading ? "生成中..." : "再生成"}
+        </button>
+      </div>
+      <div className="prose-sm max-w-none text-foreground">
+        <ReactMarkdown components={markdownComponents}>{text}</ReactMarkdown>
+      </div>
+    </div>
   );
 }
 
@@ -557,7 +604,9 @@ function renderContent(
   glossaryFocusTerm: string | null,
   onFocusGlossaryTerm: (term: string) => void,
   diagramLoadingKey: string | null,
-  onGenerateDiagram: (view: TeacherView) => void
+  onGenerateDiagram: (view: TeacherView) => void,
+  overviewLoadingKey: string | null,
+  onRegenerateOverview: (courseKey: string) => void
 ): React.ReactNode {
   if (!teacherView) return null;
 
@@ -646,6 +695,11 @@ function renderContent(
             />
           </div>
         </div>
+        <OverviewBlock
+          text={course.overviewText}
+          loading={overviewLoadingKey === teacherView.courseKey}
+          onRegenerate={() => onRegenerateOverview(teacherView.courseKey)}
+        />
         {course.diagramHtml ? (
           <HtmlDiagram html={course.diagramHtml} />
         ) : (
@@ -688,6 +742,8 @@ export default function TeacherPane({
   onFocusGlossaryTerm = () => {},
   diagramLoadingKey = null,
   onGenerateDiagram = () => {},
+  overviewLoadingKey = null,
+  onRegenerateOverview = () => {},
 }: TeacherPaneProps) {
   const [printHint, setPrintHint] = useState(false);
   const printHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -826,7 +882,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, diagramLoadingKey, onGenerateDiagram)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

@@ -281,6 +281,66 @@ export default function DrillTool() {
     }
   }, []);
 
+  // コースまとめの「総括」（Sonnet）。生成中のコースのcourseKeyを保持。
+  const [overviewLoadingKey, setOverviewLoadingKey] = useState<string | null>(null);
+
+  // 指定コースの総括をSonnetで生成し、overviewText / overviewQuestionCount を保存する。
+  // forceがfalseのときは、既に最新（保存済みの問題数 === 現在の問題数）ならスキップする。
+  const generateOverview = useCallback(async (courseKey: string, force: boolean) => {
+    const course = studyLogRef.current.courses.find((c) => c.courseKey === courseKey);
+    if (!course) return;
+    const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+    if (totalQ === 0) return;                          // 問題ゼロなら総括しない
+    if (overviewLoadingKey === courseKey) return;      // 多重起動防止
+    if (!force && course.overviewText && course.overviewQuestionCount === totalQ) return; // 最新なら何もしない
+
+    const sections = course.lessons
+      .map((l) => ({
+        heading: l.lessonName,
+        points: l.questions.map((q) => q.keyLearning).filter(Boolean),
+      }))
+      .filter((s) => s.points.length > 0);
+    if (sections.length === 0) return;
+
+    setOverviewLoadingKey(courseKey);
+    try {
+      const res = await aiFetch("/api/overview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: `${course.seriesName} ${course.courseName}`, sections }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.overview) {
+        throw new Error(data.error ?? "総括の生成に失敗しました");
+      }
+      setStudyLog((prev) => ({
+        ...prev,
+        courses: prev.courses.map((c) =>
+          c.courseKey === courseKey
+            ? { ...c, overviewText: data.overview, overviewQuestionCount: totalQ }
+            : c
+        ),
+      }));
+    } catch (err) {
+      console.error(err);
+      // 自動生成の失敗は無言で握りつぶす（手動再生成で別途alertする）
+      if (force) alert(err instanceof Error ? err.message : "総括の生成に失敗しました");
+    } finally {
+      setOverviewLoadingKey(null);
+    }
+  }, [overviewLoadingKey]);
+
+  // コースまとめを開いたとき、総括が未生成 or 問題数が増えていたら自動で作り直す（賢い自動キャッシュ方式）。
+  useEffect(() => {
+    if (teacherView?.type !== "course") return;
+    generateOverview(teacherView.courseKey, false);
+  }, [teacherView, studyLog, generateOverview]);
+
+  // 「再生成」ボタン用（中身が変わっていなくても強制的に作り直す）。
+  const handleRegenerateOverview = useCallback((courseKey: string) => {
+    generateOverview(courseKey, true);
+  }, [generateOverview]);
+
   // 自動取込で読み取った Desktop 上の元ファイルパス。
   // 解説生成が成功した（＝ドリルと確定した）時だけ取込フォルダへ移動・改名する。
   const [importedFiles, setImportedFiles] = useState<Partial<Record<ScreenshotSlot, string>>>({});
@@ -594,6 +654,8 @@ export default function DrillTool() {
           onFocusGlossaryTerm={handleFocusGlossaryTerm}
           diagramLoadingKey={diagramLoadingKey}
           onGenerateDiagram={handleGenerateDiagram}
+          overviewLoadingKey={overviewLoadingKey}
+          onRegenerateOverview={handleRegenerateOverview}
         />
       </div>
       <div className="w-80 shrink-0">

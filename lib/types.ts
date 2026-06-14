@@ -45,6 +45,8 @@ export interface CourseData {
   lessons: LessonData[];
   diagram?: string;      // 旧: コースまとめの図解（Mermaid記法）。後方互換のため残す
   diagramHtml?: string;  // コースまとめの図解（リッチHTML・「図解化」ボタンで生成）
+  overviewText?: string;          // コースまとめの総括（Sonnet生成・Markdown）。各問のkeyLearningを統合した「コースの幹」
+  overviewQuestionCount?: number; // 総括を生成した時点の総問題数。現在の問題数がこれより増えたら自動で作り直す
 }
 
 export interface StudyLog {
