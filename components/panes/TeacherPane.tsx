@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
@@ -11,8 +11,10 @@ import type { Components } from "react-markdown";
 import { useEffect, useRef, useState, isValidElement } from "react";
 import MermaidDiagram from "@/components/MermaidDiagram";
 import HtmlDiagram from "@/components/HtmlDiagram";
-import AudioSummary from "@/components/AudioSummary";
-import NotebookLmExport from "@/components/NotebookLmExport";
+
+// まとめの音声化先となるNotebookLMノート（名称「AIドリル」）。「NotebookLM」ボタンで開く。
+const NOTEBOOKLM_NOTEBOOK_URL =
+  "https://notebooklm.google.com/notebook/811e6107-7677-470a-8cb3-197d867f0fac";
 
 interface TeacherPaneProps {
   studyLog: StudyLog;
@@ -599,25 +601,6 @@ function renderContent(
             <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <NotebookLmExport
-              notebookName={`AIドリル｜${course?.courseName ?? ""}｜${lesson.lessonName}`}
-              sourceText={[
-                `AIドリル 学習まとめ`,
-                `コース: ${course?.courseName ?? ""}（${course?.seriesName ?? ""}）`,
-                `レッスン: ${lesson.lessonName}`,
-                `学習した問題数: ${lesson.questions.length}問`,
-                ``,
-                `■ このレッスンで学んだ要点`,
-                ``,
-                ...lesson.questions.map((q) => `【${q.questionInfo}】${q.keyLearning}`),
-              ].join("\n")}
-            />
-            <AudioSummary
-              text={[
-                `${lesson.lessonName} のまとめです。`,
-                ...lesson.questions.map((q, i) => `ポイント${i + 1}。${q.keyLearning}`),
-              ].join("\n")}
-            />
             <DiagramButton
               hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
               loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
@@ -656,31 +639,6 @@ function renderContent(
             </p>
           </div>
           <div className="flex items-center gap-1.5 shrink-0">
-            <NotebookLmExport
-              notebookName={`AIドリル｜${course.courseName}（コース全体）`}
-              sourceText={[
-                `AIドリル 学習まとめ`,
-                `シリーズ: ${course.seriesName}`,
-                `コース: ${course.courseName}`,
-                `レッスン数: ${course.lessons.length} / 学習した問題数: ${totalQ}問`,
-                ``,
-                `■ コース全体で学んだ要点`,
-                ...course.lessons.flatMap((l) => [
-                  ``,
-                  `▼ ${l.lessonName}`,
-                  ...l.questions.map((q) => `【${q.questionInfo}】${q.keyLearning}`),
-                ]),
-              ].join("\n")}
-            />
-            <AudioSummary
-              text={[
-                `${course.courseName} のまとめです。`,
-                ...course.lessons.flatMap((l) => [
-                  `${l.lessonName}。`,
-                  ...l.questions.map((q) => q.keyLearning),
-                ]),
-              ].join("\n")}
-            />
             <DiagramButton
               hasDiagram={!!(course.diagramHtml || course.diagram)}
               loading={diagramLoadingKey === teacherView.courseKey}
@@ -731,6 +689,12 @@ export default function TeacherPane({
   diagramLoadingKey = null,
   onGenerateDiagram = () => {},
 }: TeacherPaneProps) {
+  const [printHint, setPrintHint] = useState(false);
+  const printHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (printHintTimer.current) clearTimeout(printHintTimer.current);
+  }, []);
+
   const viewLabel =
     teacherView?.type === "course"
       ? "コースまとめ"
@@ -744,21 +708,36 @@ export default function TeacherPane({
 
   // PDF出力はレッスン/コースまとめ表示時のみ
   const printable = teacherView?.type === "lesson" || teacherView?.type === "course";
-  // 保存PDFの既定ファイル名。レッスンまとめ=レッスン名、コースまとめ=コース名。
+  // 保存PDFの既定ファイル名。並び順が分かるよう シリーズ名｜コース名｜レッスン名 を全て載せる。
+  // ファイル名に使えない「/」は全角「／」に置換する。
   const printTitle = (() => {
-    if (teacherView?.type === "lesson") return teacherView.lessonName;
+    const join = (...parts: (string | undefined)[]) =>
+      parts.filter((p) => p && p.trim()).map((p) => p!.replace(/\//g, "／")).join("｜");
+    if (teacherView?.type === "lesson") {
+      const c = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
+      return join(c?.seriesName, c?.courseName, teacherView.lessonName) || teacherView.lessonName;
+    }
     if (teacherView?.type === "course") {
       const c = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
-      return c?.courseName ?? "コース";
+      return join(c?.seriesName, c?.courseName) || c?.courseName || "コース";
     }
     return "まとめ";
   })();
 
   // まとめ領域をbody直下にクローンして印刷する（4ペイン/スクロールのレイアウトに
   // 干渉されず全幅で出力するため）。ブラウザの「PDFに保存」でPDF化できる。
+  // NotebookLMはこちらからは開かない（既に開いてある「AIドリル」タブにユーザーが
+  // 保存したPDFをドロップする運用）。
+  // 理由: NotebookLMのCOOPヘッダ(same-origin-allow-popups)でタブの「名前」が消去され、
+  // 名前付きタブの再利用が効かないため、開くと毎回タブが増えてしまう。また他オリジンの
+  // 既存タブを探して前面化するAPIはブラウザに無いので、自動で開かないのが最善。
   const handlePrint = () => {
     const src = document.getElementById("teacher-print-area");
     if (!src) return;
+    setPrintHint(true);
+    if (printHintTimer.current) clearTimeout(printHintTimer.current);
+    printHintTimer.current = setTimeout(() => setPrintHint(false), 12000);
+
     const clone = src.cloneNode(true) as HTMLElement;
     clone.id = "print-clone";
     document.body.appendChild(clone);
@@ -794,13 +773,40 @@ export default function TeacherPane({
             </p>
           )}
           {printable && (
+            <div className="relative shrink-0 print:hidden">
+              <button
+                onClick={handlePrint}
+                className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors"
+                title="このまとめをPDFで保存（印刷ダイアログで「PDFに保存」を選択）"
+              >
+                <FileDown className="h-3.5 w-3.5" />
+                PDFで保存
+              </button>
+
+              {printHint && (
+                <div className="absolute right-0 top-full z-20 mt-2 w-72 rounded-lg border bg-popover p-3 text-xs text-popover-foreground shadow-lg">
+                  <p className="font-semibold text-foreground">📄 PDFを保存 → NotebookLMへ</p>
+                  <ol className="mt-1.5 list-decimal space-y-0.5 pl-4 text-muted-foreground">
+                    <li>印刷ダイアログで「PDFに保存」を選んで保存</li>
+                    <li>隣の「NotebookLM」ボタンで AIドリル を開く</li>
+                    <li>保存したPDFを「ソースを追加」へドロップ</li>
+                    <li>Studio の「音声解説」をクリック</li>
+                  </ol>
+                  <p className="mt-2 text-[11px] text-muted-foreground">
+                    ※ 音声が英語になる場合は ⚙️設定 →「出力言語」→ 日本語 に。
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+          {printable && (
             <button
-              onClick={handlePrint}
-              className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-50 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-100 transition-colors shrink-0"
-              title="このまとめをPDFで保存（印刷ダイアログで「PDFに保存」を選択）"
+              onClick={() => window.open(NOTEBOOKLM_NOTEBOOK_URL, "_blank", "noopener,noreferrer")}
+              className="inline-flex items-center gap-1.5 rounded-full border border-violet-200 bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 hover:bg-violet-100 transition-colors shrink-0 print:hidden"
+              title="NotebookLM（AIドリル）を新しいタブで開きます"
             >
-              <FileDown className="h-3.5 w-3.5" />
-              PDFで保存
+              <Headphones className="h-3.5 w-3.5" />
+              NotebookLM
             </button>
           )}
         </div>
