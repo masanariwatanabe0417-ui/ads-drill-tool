@@ -3,12 +3,14 @@
 import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones, Highlighter } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { ExtractedLessonInfo, GlossaryHighlight, StudyLog, TeacherView } from "@/lib/types";
+import { CourseData, ExtractedLessonInfo, GlossaryHighlight, LessonData, StudyLog, SummaryHighlight, TeacherView } from "@/lib/types";
 import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary";
 import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
-import { useEffect, useRef, useState, isValidElement } from "react";
+import { visit, SKIP } from "unist-util-visit";
+import type { Root } from "hast";
+import { useEffect, useMemo, useRef, useState, isValidElement } from "react";
 import MermaidDiagram from "@/components/MermaidDiagram";
 import HtmlDiagram from "@/components/HtmlDiagram";
 
@@ -32,6 +34,9 @@ interface TeacherPaneProps {
   glossaryHighlights?: GlossaryHighlight[];
   onAddGlossaryHighlight?: (h: GlossaryHighlight) => void;
   onRemoveGlossaryHighlight?: (h: GlossaryHighlight) => void;
+  summaryHighlights?: SummaryHighlight[];
+  onAddSummaryHighlight?: (h: SummaryHighlight) => void;
+  onRemoveSummaryHighlight?: (h: SummaryHighlight) => void;
   diagramLoadingKey?: string | null;
   onGenerateDiagram?: (view: TeacherView) => void;
   overviewLoadingKey?: string | null;
@@ -72,10 +77,16 @@ function OverviewBlock({
   text,
   loading,
   onRegenerate,
+  scope,
+  highlights,
+  onRemoveHighlight,
 }: {
   text?: string;
   loading: boolean;
   onRegenerate: () => void;
+  scope: string;
+  highlights: SummaryHighlight[];
+  onRemoveHighlight: (h: SummaryHighlight) => void;
 }) {
   if (loading && !text) {
     return (
@@ -103,8 +114,8 @@ function OverviewBlock({
           {loading ? "生成中..." : "再生成"}
         </button>
       </div>
-      <div className="prose-sm max-w-none text-foreground">
-        <ReactMarkdown components={markdownComponents}>{text}</ReactMarkdown>
+      <div data-hl-block={scope} className="prose-sm max-w-none text-foreground">
+        <HighlightedMarkdown text={text} highlights={highlights} onRemove={onRemoveHighlight} />
       </div>
     </div>
   );
@@ -283,12 +294,18 @@ function saveCache(term: string, defs: string[], consolidated: string) {
   } catch {}
 }
 
-// ── マーカー（任意範囲ハイライト）描画 ───────────────────────────────
+// ── マーカー（任意範囲ハイライト）共通基盤 ───────────────────────────
+// 単語帳（GlossaryHighlight）とまとめ（SummaryHighlight）で共有する。
 const HL_CTX = 20; // アンカーの前後文脈として保持する文字数
+const MARK_CLASS =
+  "rounded-sm bg-yellow-200 px-0.5 cursor-pointer hover:bg-yellow-300 transition-colors print:bg-yellow-200";
 
-// 定義文の中からハイライトの位置を引用＋前後文脈で特定する。
+// 引用と前後の文脈を持つアンカーの最小形。
+type HLAnchor = { quote: string; prefix: string; suffix: string };
+
+// テキストの中からハイライトの位置を引用＋前後文脈で特定する。
 // 文言が変わって見つからなければ null（＝そのハイライトは静かに消える）。
-function locateHighlight(text: string, h: GlossaryHighlight): { start: number; end: number } | null {
+function locateHighlight(text: string, h: HLAnchor): { start: number; end: number } | null {
   const probes = [h.prefix + h.quote + h.suffix, h.prefix + h.quote, h.quote + h.suffix, h.quote];
   for (const probe of probes) {
     if (!probe) continue;
@@ -300,14 +317,14 @@ function locateHighlight(text: string, h: GlossaryHighlight): { start: number; e
   return null;
 }
 
-// 定義文を、ハイライト箇所だけ<mark>で囲んだReactノード列に変換する。
-function renderWithHighlights(
+// プレーンテキストを、ハイライト箇所だけ<mark>で囲んだReactノード列に変換する。
+function renderWithHighlights<T extends HLAnchor>(
   text: string,
-  highlights: GlossaryHighlight[],
-  onRemove: (h: GlossaryHighlight) => void
+  highlights: T[],
+  onRemove: (h: T) => void
 ): React.ReactNode {
   if (highlights.length === 0) return text;
-  const spans: { start: number; end: number; h: GlossaryHighlight }[] = [];
+  const spans: { start: number; end: number; h: T }[] = [];
   for (const h of highlights) {
     const loc = locateHighlight(text, h);
     if (loc && loc.end > loc.start) spans.push({ ...loc, h });
@@ -325,7 +342,7 @@ function renderWithHighlights(
       <mark
         key={key++}
         onClick={() => onRemove(s.h)}
-        className="rounded-sm bg-yellow-200 px-0.5 cursor-pointer hover:bg-yellow-300 transition-colors print:bg-yellow-200"
+        className={MARK_CLASS}
         title="クリックでマーカーを解除"
       >
         {text.slice(s.start, s.end)}
@@ -335,6 +352,162 @@ function renderWithHighlights(
   }
   if (cursor < text.length) nodes.push(text.slice(cursor));
   return nodes;
+}
+
+// ドラッグ選択を捕捉して「マーカー」ボタンを出し、確定/解除を扱う共通フック。
+// 対象ブロックは [data-hl-block]（その値が scope）で識別する。
+function useRangeMarker(
+  onCommit: (scope: string, anchor: HLAnchor) => void
+) {
+  const [pending, setPending] = useState<
+    { top: number; left: number; scope: string; anchor: HLAnchor } | null
+  >(null);
+
+  const handleMouseUp = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setPending(null); return; }
+    const range = sel.getRangeAt(0);
+    const quote = range.toString(); // textContent と整合させるため sel ではなく range を使う
+    if (!quote.trim()) { setPending(null); return; }
+    const blockOf = (node: Node | null): HTMLElement | null => {
+      const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement | null);
+      return el?.closest("[data-hl-block]") as HTMLElement | null;
+    };
+    const a = blockOf(range.startContainer);
+    const b = blockOf(range.endContainer);
+    if (!a || a !== b) { setPending(null); return; } // 単一ブロック内のみ
+    const pre = document.createRange();
+    pre.selectNodeContents(a);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const start = pre.toString().length;
+    const full = a.textContent ?? "";
+    const end = start + quote.length;
+    const rect = range.getBoundingClientRect();
+    setPending({
+      top: rect.top,
+      left: rect.left + rect.width / 2,
+      scope: a.getAttribute("data-hl-block") ?? "",
+      anchor: {
+        quote,
+        prefix: full.slice(Math.max(0, start - HL_CTX), start),
+        suffix: full.slice(end, end + HL_CTX),
+      },
+    });
+  };
+
+  const commit = () => {
+    if (!pending) return;
+    onCommit(pending.scope, pending.anchor);
+    window.getSelection()?.removeAllRanges();
+    setPending(null);
+  };
+
+  // 選択以外の場所のクリックでボタンを消す。ただしボタン自身へのmousedownは無視
+  // （消すと後続clickが届かず確定できない／Phase1で踏んだ罠）。
+  useEffect(() => {
+    if (!pending) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-marker-btn]")) return;
+      setPending(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pending]);
+
+  const marker = pending ? (
+    <button
+      data-marker-btn=""
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onClick={commit}
+      style={{
+        position: "fixed",
+        top: pending.top,
+        left: pending.left,
+        transform: "translate(-50%, -100%) translateY(-6px)",
+        zIndex: 50,
+      }}
+      className="inline-flex items-center gap-1 rounded-full bg-yellow-400 px-2.5 py-1 text-xs font-medium text-yellow-950 shadow-lg hover:bg-yellow-500 print:hidden"
+    >
+      <Highlighter className="h-3.5 w-3.5" />
+      マーカー
+    </button>
+  ) : null;
+
+  return { handleMouseUp, marker };
+}
+
+// Markdown描画の中の該当テキストを<mark>で囲む rehype プラグインを作る。
+// 各テキストノード内で「引用＋前後文脈」を探し、見つかれば mark 要素に分割する。
+// （太字などをまたぐ選択＝複数ノードにまたがる引用は一致せず描画されない＝既知の制限）
+function makeRehypeHighlight(highlights: SummaryHighlight[]) {
+  return () => (tree: Root) => {
+    if (highlights.length === 0) return;
+    visit(tree, "text", (node, index, parent) => {
+      if (!parent || index == null) return;
+      for (let hi = 0; hi < highlights.length; hi++) {
+        const loc = locateHighlight(node.value, highlights[hi]);
+        if (!loc || loc.end <= loc.start) continue;
+        const before = node.value.slice(0, loc.start);
+        const mid = node.value.slice(loc.start, loc.end);
+        const after = node.value.slice(loc.end);
+        const repl: Root["children"] = [];
+        if (before) repl.push({ type: "text", value: before });
+        repl.push({
+          type: "element",
+          tagName: "mark",
+          properties: { dataHlIdx: String(hi) },
+          children: [{ type: "text", value: mid }],
+        });
+        if (after) repl.push({ type: "text", value: after });
+        parent.children.splice(index, 1, ...repl);
+        // after があればそのノードを再訪して残りのハイライトも処理する
+        return after ? index + repl.length - 1 : index + repl.length;
+      }
+      return SKIP;
+    });
+  };
+}
+
+// 総括などMarkdown本文を、ハイライト付きで描画する。
+function HighlightedMarkdown({
+  text,
+  highlights,
+  onRemove,
+}: {
+  text: string;
+  highlights: SummaryHighlight[];
+  onRemove: (h: SummaryHighlight) => void;
+}) {
+  const rehypePlugins = useMemo(() => [makeRehypeHighlight(highlights)], [highlights]);
+  const components = useMemo<Components>(
+    () => ({
+      ...markdownComponents,
+      mark: (props) => {
+        const idx = Number(
+          (props as { "data-hl-idx"?: string })["data-hl-idx"] ??
+            (props as { node?: { properties?: { dataHlIdx?: string } } }).node?.properties?.dataHlIdx ??
+            -1
+        );
+        const h = highlights[idx];
+        return (
+          <mark
+            onClick={() => h && onRemove(h)}
+            className={MARK_CLASS}
+            title="クリックでマーカーを解除"
+          >
+            {props.children}
+          </mark>
+        );
+      },
+    }),
+    [highlights, onRemove]
+  );
+  return (
+    <ReactMarkdown rehypePlugins={rehypePlugins} components={components}>
+      {text}
+    </ReactMarkdown>
+  );
 }
 
 // ── 単語カード（統合ロジック付き） ──────────────────────────────────
@@ -365,62 +538,10 @@ function GlossaryCard({
   const [editing, setEditing] = useState(false);
   const [termDraft, setTermDraft] = useState(term.term);
 
-  // ドラッグ選択 → 浮かぶ「マーカー」ボタンの位置と保存内容
-  const [pending, setPending] = useState<{ top: number; left: number; payload: GlossaryHighlight } | null>(null);
-
-  // 定義文の上でマウスを離したら、選択範囲を引用＋前後文脈として捕捉する。
-  const handleDefMouseUp = () => {
-    const sel = window.getSelection();
-    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setPending(null); return; }
-    const range = sel.getRangeAt(0);
-    const quote = sel.toString();
-    if (!quote.trim()) { setPending(null); return; }
-    const closestDef = (node: Node | null): HTMLElement | null => {
-      const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement | null);
-      return el?.closest("[data-def-index]") as HTMLElement | null;
-    };
-    const startP = closestDef(range.startContainer);
-    const endP = closestDef(range.endContainer);
-    if (!startP || startP !== endP) { setPending(null); return; } // 単一の定義行内のみ
-    const pre = document.createRange();
-    pre.selectNodeContents(startP);
-    pre.setEnd(range.startContainer, range.startOffset);
-    const start = pre.toString().length;
-    const full = startP.textContent ?? "";
-    const end = start + quote.length;
-    const rect = range.getBoundingClientRect();
-    setPending({
-      top: rect.top,
-      left: rect.left + rect.width / 2,
-      payload: {
-        termKey: term.term.toLowerCase(),
-        quote,
-        prefix: full.slice(Math.max(0, start - HL_CTX), start),
-        suffix: full.slice(end, end + HL_CTX),
-        color: "yellow",
-      },
-    });
-  };
-
-  const commitHighlight = () => {
-    if (!pending) return;
-    onAddHighlight(pending.payload);
-    window.getSelection()?.removeAllRanges();
-    setPending(null);
-  };
-
-  // 選択以外の場所をクリックしたらマーカーボタンを消す。
-  // ただしボタン自身へのmousedownでは消さない（消すとその後のclickが届かず確定できない）。
-  useEffect(() => {
-    if (!pending) return;
-    const onDown = (e: MouseEvent) => {
-      const t = e.target as HTMLElement | null;
-      if (t?.closest?.("[data-marker-btn]")) return;
-      setPending(null);
-    };
-    document.addEventListener("mousedown", onDown);
-    return () => document.removeEventListener("mousedown", onDown);
-  }, [pending]);
+  // ドラッグ選択 →「マーカー」ボタン（共通フック）。scope=termKey で保存する。
+  const { handleMouseUp, marker } = useRangeMarker((scope, anchor) =>
+    onAddHighlight({ termKey: scope, color: "yellow", ...anchor })
+  );
 
   // 暗記モードの ON/OFF が切り替わったら全カードを再び隠す
   useEffect(() => {
@@ -524,31 +645,14 @@ function GlossaryCard({
         </button>
       ) : (
         <>
-          <div onMouseUp={handleDefMouseUp}>
+          <div onMouseUp={handleMouseUp}>
             {displayDefs.map((d, i) => (
-              <p key={i} data-def-index={i} className="text-sm text-foreground leading-relaxed">
+              <p key={i} data-hl-block={term.term.toLowerCase()} className="text-sm text-foreground leading-relaxed">
                 {renderWithHighlights(d, highlights, onRemoveHighlight)}
               </p>
             ))}
           </div>
-          {pending && (
-            <button
-              data-marker-btn=""
-              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-              onClick={commitHighlight}
-              style={{
-                position: "fixed",
-                top: pending.top,
-                left: pending.left,
-                transform: "translate(-50%, -100%) translateY(-6px)",
-                zIndex: 50,
-              }}
-              className="inline-flex items-center gap-1 rounded-full bg-yellow-400 px-2.5 py-1 text-xs font-medium text-yellow-950 shadow-lg hover:bg-yellow-500 print:hidden"
-            >
-              <Highlighter className="h-3.5 w-3.5" />
-              マーカー
-            </button>
-          )}
+          {marker}
           <div className="flex flex-wrap gap-1 pt-1">
             {term.occurrences.map((o) => (
               <button
@@ -744,6 +848,148 @@ function GlossaryView({
   );
 }
 
+// ── レッスンまとめ（ハイライト対応） ───────────────────────────────
+function LessonSummary({
+  lesson,
+  view,
+  diagramLoadingKey,
+  onGenerateDiagram,
+  highlights,
+  onAddHighlight,
+  onRemoveHighlight,
+}: {
+  lesson: LessonData;
+  view: Extract<TeacherView, { type: "lesson" }>;
+  diagramLoadingKey: string | null;
+  onGenerateDiagram: (view: TeacherView) => void;
+  highlights: SummaryHighlight[];
+  onAddHighlight: (h: SummaryHighlight) => void;
+  onRemoveHighlight: (h: SummaryHighlight) => void;
+}) {
+  const { handleMouseUp, marker } = useRangeMarker((scope, anchor) =>
+    onAddHighlight({ scope, color: "yellow", ...anchor })
+  );
+  const hlFor = (scope: string) => highlights.filter((h) => h.scope === scope);
+  return (
+    <div id="teacher-print-area" className="space-y-4" onMouseUp={handleMouseUp}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
+          <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <DiagramButton
+            hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
+            loading={diagramLoadingKey === `${view.courseKey}__${view.lessonName}`}
+            onGenerate={() => onGenerateDiagram(view)}
+          />
+        </div>
+      </div>
+      {lesson.diagramHtml ? (
+        <HtmlDiagram html={lesson.diagramHtml} />
+      ) : (
+        lesson.diagram && <MermaidDiagram code={lesson.diagram} />
+      )}
+      <div className="space-y-3">
+        {lesson.questions.map((q) => {
+          const scope = `kl:${view.courseKey}__${view.lessonName}__${q.questionInfo}`;
+          return (
+            <div key={q.questionInfo} className="border rounded-lg p-3 space-y-1">
+              <p className="text-xs font-bold text-primary">{q.questionInfo}</p>
+              <p data-hl-block={scope} className="text-sm text-foreground">
+                {renderWithHighlights(q.keyLearning, hlFor(scope), onRemoveHighlight)}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      {marker}
+    </div>
+  );
+}
+
+// ── コースまとめ（ハイライト対応） ─────────────────────────────────
+function CourseSummary({
+  course,
+  view,
+  diagramLoadingKey,
+  onGenerateDiagram,
+  overviewLoadingKey,
+  onRegenerateOverview,
+  highlights,
+  onAddHighlight,
+  onRemoveHighlight,
+}: {
+  course: CourseData;
+  view: Extract<TeacherView, { type: "course" }>;
+  diagramLoadingKey: string | null;
+  onGenerateDiagram: (view: TeacherView) => void;
+  overviewLoadingKey: string | null;
+  onRegenerateOverview: (courseKey: string) => void;
+  highlights: SummaryHighlight[];
+  onAddHighlight: (h: SummaryHighlight) => void;
+  onRemoveHighlight: (h: SummaryHighlight) => void;
+}) {
+  const { handleMouseUp, marker } = useRangeMarker((scope, anchor) =>
+    onAddHighlight({ scope, color: "yellow", ...anchor })
+  );
+  const hlFor = (scope: string) => highlights.filter((h) => h.scope === scope);
+  const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+  return (
+    <div id="teacher-print-area" className="space-y-5" onMouseUp={handleMouseUp}>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
+          <p className="text-xs text-muted-foreground mt-1">
+            {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
+          </p>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <DiagramButton
+            hasDiagram={!!(course.diagramHtml || course.diagram)}
+            loading={diagramLoadingKey === view.courseKey}
+            onGenerate={() => onGenerateDiagram(view)}
+          />
+        </div>
+      </div>
+      <OverviewBlock
+        text={course.overviewText}
+        loading={overviewLoadingKey === view.courseKey}
+        onRegenerate={() => onRegenerateOverview(view.courseKey)}
+        scope={`ov:${view.courseKey}`}
+        highlights={hlFor(`ov:${view.courseKey}`)}
+        onRemoveHighlight={onRemoveHighlight}
+      />
+      {course.diagramHtml ? (
+        <HtmlDiagram html={course.diagramHtml} />
+      ) : (
+        course.diagram && <MermaidDiagram code={course.diagram} />
+      )}
+      {course.lessons.map((lesson) => (
+        <div key={lesson.lessonName} className="space-y-2">
+          <h3 className="text-sm font-semibold text-foreground border-b pb-1">
+            {lesson.lessonName}
+          </h3>
+          <div className="space-y-2 pl-2">
+            {lesson.questions.map((q) => {
+              const scope = `kl:${view.courseKey}__${lesson.lessonName}__${q.questionInfo}`;
+              return (
+                <div key={q.questionInfo} className="flex gap-2">
+                  <span className="text-xs font-bold text-primary shrink-0 w-8">{q.questionInfo}</span>
+                  <p data-hl-block={scope} className="text-xs text-foreground leading-relaxed">
+                    {renderWithHighlights(q.keyLearning, hlFor(scope), onRemoveHighlight)}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      {marker}
+    </div>
+  );
+}
+
 // ── コンテンツ描画 ──────────────────────────────────────────────────
 function renderContent(
   studyLog: StudyLog,
@@ -757,6 +1003,9 @@ function renderContent(
   glossaryHighlights: GlossaryHighlight[],
   onAddGlossaryHighlight: (h: GlossaryHighlight) => void,
   onRemoveGlossaryHighlight: (h: GlossaryHighlight) => void,
+  summaryHighlights: SummaryHighlight[],
+  onAddSummaryHighlight: (h: SummaryHighlight) => void,
+  onRemoveSummaryHighlight: (h: SummaryHighlight) => void,
   diagramLoadingKey: string | null,
   onGenerateDiagram: (view: TeacherView) => void,
   overviewLoadingKey: string | null,
@@ -800,84 +1049,33 @@ function renderContent(
     const lesson = course?.lessons.find((l) => l.lessonName === teacherView.lessonName);
     if (!lesson) return null;
     return (
-      <div id="teacher-print-area" className="space-y-4">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h2 className="text-base font-bold text-foreground">{lesson.lessonName} まとめ</h2>
-            <p className="text-xs text-muted-foreground mt-1">{lesson.questions.length}問学習済み</p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <DiagramButton
-              hasDiagram={!!(lesson.diagramHtml || lesson.diagram)}
-              loading={diagramLoadingKey === `${teacherView.courseKey}__${teacherView.lessonName}`}
-              onGenerate={() => onGenerateDiagram(teacherView)}
-            />
-          </div>
-        </div>
-        {lesson.diagramHtml ? (
-          <HtmlDiagram html={lesson.diagramHtml} />
-        ) : (
-          lesson.diagram && <MermaidDiagram code={lesson.diagram} />
-        )}
-        <div className="space-y-3">
-          {lesson.questions.map((q) => (
-            <div key={q.questionInfo} className="border rounded-lg p-3 space-y-1">
-              <p className="text-xs font-bold text-primary">{q.questionInfo}</p>
-              <p className="text-sm text-foreground">{q.keyLearning}</p>
-            </div>
-          ))}
-        </div>
-      </div>
+      <LessonSummary
+        lesson={lesson}
+        view={teacherView}
+        diagramLoadingKey={diagramLoadingKey}
+        onGenerateDiagram={onGenerateDiagram}
+        highlights={summaryHighlights}
+        onAddHighlight={onAddSummaryHighlight}
+        onRemoveHighlight={onRemoveSummaryHighlight}
+      />
     );
   }
 
   if (teacherView.type === "course") {
     const course = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey);
     if (!course) return null;
-    const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
     return (
-      <div id="teacher-print-area" className="space-y-5">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
-            <p className="text-xs text-muted-foreground mt-1">
-              {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
-            </p>
-          </div>
-          <div className="flex items-center gap-1.5 shrink-0">
-            <DiagramButton
-              hasDiagram={!!(course.diagramHtml || course.diagram)}
-              loading={diagramLoadingKey === teacherView.courseKey}
-              onGenerate={() => onGenerateDiagram(teacherView)}
-            />
-          </div>
-        </div>
-        <OverviewBlock
-          text={course.overviewText}
-          loading={overviewLoadingKey === teacherView.courseKey}
-          onRegenerate={() => onRegenerateOverview(teacherView.courseKey)}
-        />
-        {course.diagramHtml ? (
-          <HtmlDiagram html={course.diagramHtml} />
-        ) : (
-          course.diagram && <MermaidDiagram code={course.diagram} />
-        )}
-        {course.lessons.map((lesson) => (
-          <div key={lesson.lessonName} className="space-y-2">
-            <h3 className="text-sm font-semibold text-foreground border-b pb-1">
-              {lesson.lessonName}
-            </h3>
-            <div className="space-y-2 pl-2">
-              {lesson.questions.map((q) => (
-                <div key={q.questionInfo} className="flex gap-2">
-                  <span className="text-xs font-bold text-primary shrink-0 w-8">{q.questionInfo}</span>
-                  <p className="text-xs text-foreground leading-relaxed">{q.keyLearning}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
+      <CourseSummary
+        course={course}
+        view={teacherView}
+        diagramLoadingKey={diagramLoadingKey}
+        onGenerateDiagram={onGenerateDiagram}
+        overviewLoadingKey={overviewLoadingKey}
+        onRegenerateOverview={onRegenerateOverview}
+        highlights={summaryHighlights}
+        onAddHighlight={onAddSummaryHighlight}
+        onRemoveHighlight={onRemoveSummaryHighlight}
+      />
     );
   }
 
@@ -900,6 +1098,9 @@ export default function TeacherPane({
   glossaryHighlights = [],
   onAddGlossaryHighlight = () => {},
   onRemoveGlossaryHighlight = () => {},
+  summaryHighlights = [],
+  onAddSummaryHighlight = () => {},
+  onRemoveSummaryHighlight = () => {},
   diagramLoadingKey = null,
   onGenerateDiagram = () => {},
   overviewLoadingKey = null,
@@ -1042,7 +1243,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

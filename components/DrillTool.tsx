@@ -13,6 +13,7 @@ import {
   QAEntry,
   ScreenshotSlot,
   StudyLog,
+  SummaryHighlight,
   TeacherView,
 } from "@/lib/types";
 import { aiFetch } from "@/lib/passcode";
@@ -242,6 +243,29 @@ export default function DrillTool() {
         (x) => !(x.termKey === h.termKey && x.quote === h.quote && x.prefix === h.prefix && x.suffix === h.suffix)
       );
       return { ...prev, glossaryHighlights: next };
+    });
+  }, []);
+
+  // まとめ（レッスン/コースまとめ）のマーカー。単語帳と同じく引用＋前後文脈でアンカーする。
+  const handleAddSummaryHighlight = useCallback((h: SummaryHighlight) => {
+    if (!h.quote.trim()) return;
+    setStudyLog((prev) => {
+      const list = prev.summaryHighlights ?? [];
+      const dup = list.some(
+        (x) => x.scope === h.scope && x.quote === h.quote && x.prefix === h.prefix && x.suffix === h.suffix
+      );
+      if (dup) return prev;
+      return { ...prev, summaryHighlights: [...list, h] };
+    });
+  }, []);
+
+  const handleRemoveSummaryHighlight = useCallback((h: SummaryHighlight) => {
+    setStudyLog((prev) => {
+      const list = prev.summaryHighlights ?? [];
+      const next = list.filter(
+        (x) => !(x.scope === h.scope && x.quote === h.quote && x.prefix === h.prefix && x.suffix === h.suffix)
+      );
+      return { ...prev, summaryHighlights: next };
     });
   }, []);
 
@@ -684,6 +708,9 @@ export default function DrillTool() {
           glossaryHighlights={studyLog.glossaryHighlights ?? []}
           onAddGlossaryHighlight={handleAddGlossaryHighlight}
           onRemoveGlossaryHighlight={handleRemoveGlossaryHighlight}
+          summaryHighlights={studyLog.summaryHighlights ?? []}
+          onAddSummaryHighlight={handleAddSummaryHighlight}
+          onRemoveSummaryHighlight={handleRemoveSummaryHighlight}
           diagramLoadingKey={diagramLoadingKey}
           onGenerateDiagram={handleGenerateDiagram}
           overviewLoadingKey={overviewLoadingKey}

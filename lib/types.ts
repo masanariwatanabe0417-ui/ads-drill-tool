@@ -59,12 +59,23 @@ export interface GlossaryHighlight {
   color: string;    // マーカー色。当面 "yellow" 固定。将来の多色化に備えて保持
 }
 
+// まとめ（レッスン/コースまとめ）の任意範囲ハイライト。アンカーの考え方は
+// GlossaryHighlight と同じ（引用＋前後文脈・再生成で外れる）。scope で対象ブロックを識別する。
+export interface SummaryHighlight {
+  scope: string;   // 対象ブロック。"kl:<courseKey>__<lessonName>__<questionInfo>"（keyLearning）/ "ov:<courseKey>"（総括）
+  quote: string;
+  prefix: string;
+  suffix: string;
+  color: string;   // 当面 "yellow" 固定
+}
+
 export interface StudyLog {
   courses: CourseData[];
   glossaryOverrides?: Record<string, string>;    // term.toLowerCase() → カスタム定義文
   glossaryManualTerms?: Record<string, string>;  // 表示用term → 定義（手動追加用語）
   glossaryTermRenames?: Record<string, string>;  // 旧term.toLowerCase() → 修正後の表示用term（読み間違い等の手動修正）
   glossaryHighlights?: GlossaryHighlight[];       // 単語帳のマーカー（任意範囲ハイライト）
+  summaryHighlights?: SummaryHighlight[];         // まとめのマーカー（任意範囲ハイライト）
 }
 
 export interface NewTermSuggestion {
