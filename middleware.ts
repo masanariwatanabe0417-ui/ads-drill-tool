@@ -29,5 +29,5 @@ export function middleware(req: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/api/teacher", "/api/question", "/api/glossary-consolidate", "/api/diagram"],
+  matcher: ["/api/teacher", "/api/question", "/api/glossary-consolidate", "/api/diagram", "/api/glossary-term"],
 };

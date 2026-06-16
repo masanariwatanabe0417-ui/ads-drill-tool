@@ -222,6 +222,21 @@ export default function DrillTool() {
     );
   }, []);
 
+  // 先生ペインの解説文から選択した語句を、手動で単語帳に登録する。
+  // 用語解説に載っていない重要語（例: Next.js, .tsx）の補完用。保存先は既存の
+  // glossaryManualTerms（解説本文に登場しなくても単語帳に補完表示される）。
+  const handleAddManualGlossaryTerm = useCallback((term: string, definition: string) => {
+    const t = term.trim();
+    if (!t) return;
+    setStudyLog((prev) => ({
+      ...prev,
+      glossaryManualTerms: {
+        ...prev.glossaryManualTerms,
+        [t]: definition.trim(),
+      },
+    }));
+  }, []);
+
   // 単語帳のマーカー（任意範囲ハイライト）。引用＋前後文脈でアンカーする。
   // 同じ範囲が二重登録されないよう、4つのアンカー項目が一致するものは弾く。
   const handleAddGlossaryHighlight = useCallback((h: GlossaryHighlight) => {
@@ -715,6 +730,7 @@ export default function DrillTool() {
           onGenerateDiagram={handleGenerateDiagram}
           overviewLoadingKey={overviewLoadingKey}
           onRegenerateOverview={handleRegenerateOverview}
+          onAddManualGlossaryTerm={handleAddManualGlossaryTerm}
         />
       </div>
       <div className="w-80 shrink-0">

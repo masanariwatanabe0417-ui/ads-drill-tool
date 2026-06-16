@@ -1,6 +1,6 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones, Highlighter } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones, Highlighter, BookPlus, Check } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { CourseData, ExtractedLessonInfo, GlossaryHighlight, LessonData, StudyLog, SummaryHighlight, TeacherView } from "@/lib/types";
@@ -41,6 +41,7 @@ interface TeacherPaneProps {
   onGenerateDiagram?: (view: TeacherView) => void;
   overviewLoadingKey?: string | null;
   onRegenerateOverview?: (courseKey: string) => void;
+  onAddManualGlossaryTerm?: (term: string, definition: string) => void;
 }
 
 // ── まとめの図解化ボタン + 図表示 ──────────────────────────────────
@@ -990,6 +991,151 @@ function CourseSummary({
   );
 }
 
+// ── 解説文：選択した語句を単語帳に追加する ────────────────────────────
+// useRangeMarker と同じ「選択を捕捉して浮遊ボタン」方式だが、こちらは範囲ハイライト
+// ではなく "選択テキスト" だけを取り出して単語帳登録に使う（アンカー不要）。
+// mousedownでボタンを消す際 data-marker-btn を無視するのは Phase1 で踏んだ罠の対策。
+function useSelectionPicker(onPick: (text: string, top: number, left: number) => void) {
+  const [pending, setPending] = useState<{ top: number; left: number; text: string } | null>(null);
+
+  const handleMouseUp = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setPending(null); return; }
+    const range = sel.getRangeAt(0);
+    const text = range.toString().trim();
+    if (!text) { setPending(null); return; }
+    const rect = range.getBoundingClientRect();
+    setPending({ top: rect.top, left: rect.left + rect.width / 2, text });
+  };
+
+  useEffect(() => {
+    if (!pending) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-marker-btn]")) return;
+      setPending(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pending]);
+
+  const dismiss = () => { window.getSelection()?.removeAllRanges(); setPending(null); };
+
+  const button = pending ? (
+    <button
+      data-marker-btn=""
+      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+      onClick={() => { onPick(pending.text, pending.top, pending.left); dismiss(); }}
+      style={{
+        position: "fixed",
+        top: pending.top,
+        left: pending.left,
+        transform: "translate(-50%, -100%) translateY(-6px)",
+        zIndex: 50,
+      }}
+      className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium text-white shadow-lg hover:bg-blue-700 print:hidden"
+    >
+      <BookPlus className="h-3.5 w-3.5" />
+      単語帳に追加
+    </button>
+  ) : null;
+
+  return { handleMouseUp, button };
+}
+
+// 問題の解説を描画し、選択した語句を単語帳に追加できるようにする。
+function ExplanationView({
+  explanation,
+  onAddTerm,
+}: {
+  explanation: string;
+  onAddTerm: (term: string, definition: string) => void;
+}) {
+  // 確認カード（AI生成中／編集可能なterm・definition）。
+  const [draft, setDraft] = useState<{ term: string; definition: string; loading: boolean } | null>(null);
+
+  const startAdd = async (selected: string) => {
+    setDraft({ term: selected, definition: "", loading: true });
+    try {
+      const res = await aiFetch("/api/glossary-term", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ selectedText: selected, context: explanation }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "生成に失敗しました");
+      setDraft({ term: data.term || selected, definition: data.definition || "", loading: false });
+    } catch {
+      // 生成失敗時も手入力できるよう、選択語をtermに入れた空フォームにする。
+      setDraft({ term: selected, definition: "", loading: false });
+    }
+  };
+
+  const { handleMouseUp, button } = useSelectionPicker((text) => startAdd(text));
+
+  return (
+    <div className="prose-sm max-w-none" onMouseUp={handleMouseUp}>
+      <ReactMarkdown components={markdownComponents}>{explanation}</ReactMarkdown>
+      {button}
+
+      {draft && (
+        <div className="not-prose fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 print:hidden">
+          <div className="w-full max-w-md rounded-xl border bg-background p-4 shadow-xl space-y-3">
+            <div className="flex items-center gap-2">
+              <BookPlus className="h-4 w-4 text-blue-600" />
+              <h3 className="text-sm font-semibold">単語帳に追加</h3>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">用語名</label>
+              <input
+                value={draft.term}
+                onChange={(e) => setDraft((d) => d && { ...d, term: e.target.value })}
+                className="w-full rounded-md border px-2 py-1.5 text-sm"
+                placeholder="例: Next.js(ネクストジェイエス)"
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">定義</label>
+              <textarea
+                value={draft.definition}
+                onChange={(e) => setDraft((d) => d && { ...d, definition: e.target.value })}
+                rows={4}
+                className="w-full rounded-md border px-2 py-1.5 text-sm resize-y"
+                placeholder={draft.loading ? "AIが定義を作成中..." : "やさしい定義（1〜2文）"}
+              />
+              {draft.loading && (
+                <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" /> AIが定義を作成中...
+                </p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setDraft(null)}
+                className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={() => {
+                  if (!draft.term.trim() || !draft.definition.trim()) return;
+                  onAddTerm(draft.term, draft.definition);
+                  setDraft(null);
+                }}
+                disabled={!draft.term.trim() || !draft.definition.trim()}
+                className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                <Check className="h-3.5 w-3.5" />
+                追加する
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── コンテンツ描画 ──────────────────────────────────────────────────
 function renderContent(
   studyLog: StudyLog,
@@ -1009,7 +1155,8 @@ function renderContent(
   diagramLoadingKey: string | null,
   onGenerateDiagram: (view: TeacherView) => void,
   overviewLoadingKey: string | null,
-  onRegenerateOverview: (courseKey: string) => void
+  onRegenerateOverview: (courseKey: string) => void,
+  onAddManualGlossaryTerm: (term: string, definition: string) => void
 ): React.ReactNode {
   if (!teacherView) return null;
 
@@ -1035,13 +1182,7 @@ function renderContent(
     const lesson = course?.lessons.find((l) => l.lessonName === teacherView.lessonName);
     const q = lesson?.questions.find((q) => q.questionInfo === teacherView.questionInfo);
     const explanation = q?.explanation ?? "";
-    return (
-      <div className="prose-sm max-w-none">
-        <ReactMarkdown components={markdownComponents}>
-          {explanation}
-        </ReactMarkdown>
-      </div>
-    );
+    return <ExplanationView explanation={explanation} onAddTerm={onAddManualGlossaryTerm} />;
   }
 
   if (teacherView.type === "lesson") {
@@ -1105,6 +1246,7 @@ export default function TeacherPane({
   onGenerateDiagram = () => {},
   overviewLoadingKey = null,
   onRegenerateOverview = () => {},
+  onAddManualGlossaryTerm = () => {},
 }: TeacherPaneProps) {
   const [printHint, setPrintHint] = useState(false);
   const printHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1243,7 +1385,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview, onAddManualGlossaryTerm)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">
