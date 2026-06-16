@@ -9,6 +9,7 @@ import DrillSidePanel from "./DrillSidePanel";
 import {
   DrillScreenshots,
   ExtractedLessonInfo,
+  GlossaryHighlight,
   QAEntry,
   ScreenshotSlot,
   StudyLog,
@@ -193,7 +194,11 @@ export default function DrillTool() {
         delete manual[o];
         manual[n] = oldManual;
       }
-      return { ...prev, glossaryTermRenames: renames, glossaryOverrides: overrides, glossaryManualTerms: manual };
+      // マーカーのtermKeyも新名へ引き継ぐ（リネームでハイライトが孤立しないように）
+      const highlights = (prev.glossaryHighlights ?? []).map((h) =>
+        h.termKey === o.toLowerCase() ? { ...h, termKey: n.toLowerCase() } : h
+      );
+      return { ...prev, glossaryTermRenames: renames, glossaryOverrides: overrides, glossaryManualTerms: manual, glossaryHighlights: highlights };
     });
     // 質問ペインでフォーカス中の用語名も追従させる
     setGlossaryFocusTerm((cur) => (cur === o ? n : cur));
@@ -214,6 +219,30 @@ export default function DrillTool() {
           : e
       )
     );
+  }, []);
+
+  // 単語帳のマーカー（任意範囲ハイライト）。引用＋前後文脈でアンカーする。
+  // 同じ範囲が二重登録されないよう、4つのアンカー項目が一致するものは弾く。
+  const handleAddGlossaryHighlight = useCallback((h: GlossaryHighlight) => {
+    if (!h.quote.trim()) return;
+    setStudyLog((prev) => {
+      const list = prev.glossaryHighlights ?? [];
+      const dup = list.some(
+        (x) => x.termKey === h.termKey && x.quote === h.quote && x.prefix === h.prefix && x.suffix === h.suffix
+      );
+      if (dup) return prev;
+      return { ...prev, glossaryHighlights: [...list, h] };
+    });
+  }, []);
+
+  const handleRemoveGlossaryHighlight = useCallback((h: GlossaryHighlight) => {
+    setStudyLog((prev) => {
+      const list = prev.glossaryHighlights ?? [];
+      const next = list.filter(
+        (x) => !(x.termKey === h.termKey && x.quote === h.quote && x.prefix === h.prefix && x.suffix === h.suffix)
+      );
+      return { ...prev, glossaryHighlights: next };
+    });
   }, []);
 
   // レッスン／コースまとめの「図解化」。生成中のまとめを示すキー（courseKey or courseKey__lessonName）
@@ -652,6 +681,9 @@ export default function DrillTool() {
           onRenameGlossaryTerm={handleRenameGlossaryTerm}
           glossaryFocusTerm={glossaryFocusTerm}
           onFocusGlossaryTerm={handleFocusGlossaryTerm}
+          glossaryHighlights={studyLog.glossaryHighlights ?? []}
+          onAddGlossaryHighlight={handleAddGlossaryHighlight}
+          onRemoveGlossaryHighlight={handleRemoveGlossaryHighlight}
           diagramLoadingKey={diagramLoadingKey}
           onGenerateDiagram={handleGenerateDiagram}
           overviewLoadingKey={overviewLoadingKey}

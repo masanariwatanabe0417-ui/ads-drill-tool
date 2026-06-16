@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones } from "lucide-react";
+import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones, Highlighter } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { ExtractedLessonInfo, StudyLog, TeacherView } from "@/lib/types";
+import { ExtractedLessonInfo, GlossaryHighlight, StudyLog, TeacherView } from "@/lib/types";
 import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary";
 import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
@@ -29,6 +29,9 @@ interface TeacherPaneProps {
   onRenameGlossaryTerm?: (oldTerm: string, newTerm: string) => void;
   glossaryFocusTerm?: string | null;
   onFocusGlossaryTerm?: (term: string) => void;
+  glossaryHighlights?: GlossaryHighlight[];
+  onAddGlossaryHighlight?: (h: GlossaryHighlight) => void;
+  onRemoveGlossaryHighlight?: (h: GlossaryHighlight) => void;
   diagramLoadingKey?: string | null;
   onGenerateDiagram?: (view: TeacherView) => void;
   overviewLoadingKey?: string | null;
@@ -280,6 +283,60 @@ function saveCache(term: string, defs: string[], consolidated: string) {
   } catch {}
 }
 
+// ── マーカー（任意範囲ハイライト）描画 ───────────────────────────────
+const HL_CTX = 20; // アンカーの前後文脈として保持する文字数
+
+// 定義文の中からハイライトの位置を引用＋前後文脈で特定する。
+// 文言が変わって見つからなければ null（＝そのハイライトは静かに消える）。
+function locateHighlight(text: string, h: GlossaryHighlight): { start: number; end: number } | null {
+  const probes = [h.prefix + h.quote + h.suffix, h.prefix + h.quote, h.quote + h.suffix, h.quote];
+  for (const probe of probes) {
+    if (!probe) continue;
+    const idx = text.indexOf(probe);
+    if (idx < 0) continue;
+    const off = probe.indexOf(h.quote);
+    return { start: idx + off, end: idx + off + h.quote.length };
+  }
+  return null;
+}
+
+// 定義文を、ハイライト箇所だけ<mark>で囲んだReactノード列に変換する。
+function renderWithHighlights(
+  text: string,
+  highlights: GlossaryHighlight[],
+  onRemove: (h: GlossaryHighlight) => void
+): React.ReactNode {
+  if (highlights.length === 0) return text;
+  const spans: { start: number; end: number; h: GlossaryHighlight }[] = [];
+  for (const h of highlights) {
+    const loc = locateHighlight(text, h);
+    if (loc && loc.end > loc.start) spans.push({ ...loc, h });
+  }
+  if (spans.length === 0) return text;
+  spans.sort((a, b) => a.start - b.start);
+
+  const nodes: React.ReactNode[] = [];
+  let cursor = 0;
+  let key = 0;
+  for (const s of spans) {
+    if (s.start < cursor) continue; // 重なりはスキップ
+    if (s.start > cursor) nodes.push(text.slice(cursor, s.start));
+    nodes.push(
+      <mark
+        key={key++}
+        onClick={() => onRemove(s.h)}
+        className="rounded-sm bg-yellow-200 px-0.5 cursor-pointer hover:bg-yellow-300 transition-colors print:bg-yellow-200"
+        title="クリックでマーカーを解除"
+      >
+        {text.slice(s.start, s.end)}
+      </mark>
+    );
+    cursor = s.end;
+  }
+  if (cursor < text.length) nodes.push(text.slice(cursor));
+  return nodes;
+}
+
 // ── 単語カード（統合ロジック付き） ──────────────────────────────────
 function GlossaryCard({
   term,
@@ -289,6 +346,9 @@ function GlossaryCard({
   onFocusTerm,
   isFocused,
   concealed = false,
+  highlights,
+  onAddHighlight,
+  onRemoveHighlight,
 }: {
   term: GlossaryTerm;
   onSelectView: (view: TeacherView) => void;
@@ -297,10 +357,70 @@ function GlossaryCard({
   onFocusTerm: (term: string) => void;
   isFocused: boolean;
   concealed?: boolean;
+  highlights: GlossaryHighlight[];
+  onAddHighlight: (h: GlossaryHighlight) => void;
+  onRemoveHighlight: (h: GlossaryHighlight) => void;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [editing, setEditing] = useState(false);
   const [termDraft, setTermDraft] = useState(term.term);
+
+  // ドラッグ選択 → 浮かぶ「マーカー」ボタンの位置と保存内容
+  const [pending, setPending] = useState<{ top: number; left: number; payload: GlossaryHighlight } | null>(null);
+
+  // 定義文の上でマウスを離したら、選択範囲を引用＋前後文脈として捕捉する。
+  const handleDefMouseUp = () => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) { setPending(null); return; }
+    const range = sel.getRangeAt(0);
+    const quote = sel.toString();
+    if (!quote.trim()) { setPending(null); return; }
+    const closestDef = (node: Node | null): HTMLElement | null => {
+      const el = node?.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement | null);
+      return el?.closest("[data-def-index]") as HTMLElement | null;
+    };
+    const startP = closestDef(range.startContainer);
+    const endP = closestDef(range.endContainer);
+    if (!startP || startP !== endP) { setPending(null); return; } // 単一の定義行内のみ
+    const pre = document.createRange();
+    pre.selectNodeContents(startP);
+    pre.setEnd(range.startContainer, range.startOffset);
+    const start = pre.toString().length;
+    const full = startP.textContent ?? "";
+    const end = start + quote.length;
+    const rect = range.getBoundingClientRect();
+    setPending({
+      top: rect.top,
+      left: rect.left + rect.width / 2,
+      payload: {
+        termKey: term.term.toLowerCase(),
+        quote,
+        prefix: full.slice(Math.max(0, start - HL_CTX), start),
+        suffix: full.slice(end, end + HL_CTX),
+        color: "yellow",
+      },
+    });
+  };
+
+  const commitHighlight = () => {
+    if (!pending) return;
+    onAddHighlight(pending.payload);
+    window.getSelection()?.removeAllRanges();
+    setPending(null);
+  };
+
+  // 選択以外の場所をクリックしたらマーカーボタンを消す。
+  // ただしボタン自身へのmousedownでは消さない（消すとその後のclickが届かず確定できない）。
+  useEffect(() => {
+    if (!pending) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (t?.closest?.("[data-marker-btn]")) return;
+      setPending(null);
+    };
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, [pending]);
 
   // 暗記モードの ON/OFF が切り替わったら全カードを再び隠す
   useEffect(() => {
@@ -404,9 +524,31 @@ function GlossaryCard({
         </button>
       ) : (
         <>
-          {displayDefs.map((d, i) => (
-            <p key={i} className="text-sm text-foreground leading-relaxed">{d}</p>
-          ))}
+          <div onMouseUp={handleDefMouseUp}>
+            {displayDefs.map((d, i) => (
+              <p key={i} data-def-index={i} className="text-sm text-foreground leading-relaxed">
+                {renderWithHighlights(d, highlights, onRemoveHighlight)}
+              </p>
+            ))}
+          </div>
+          {pending && (
+            <button
+              data-marker-btn=""
+              onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+              onClick={commitHighlight}
+              style={{
+                position: "fixed",
+                top: pending.top,
+                left: pending.left,
+                transform: "translate(-50%, -100%) translateY(-6px)",
+                zIndex: 50,
+              }}
+              className="inline-flex items-center gap-1 rounded-full bg-yellow-400 px-2.5 py-1 text-xs font-medium text-yellow-950 shadow-lg hover:bg-yellow-500 print:hidden"
+            >
+              <Highlighter className="h-3.5 w-3.5" />
+              マーカー
+            </button>
+          )}
           <div className="flex flex-wrap gap-1 pt-1">
             {term.occurrences.map((o) => (
               <button
@@ -441,6 +583,9 @@ function GlossaryView({
   onRenameTerm,
   focusTerm,
   onFocusTerm,
+  highlights,
+  onAddHighlight,
+  onRemoveHighlight,
 }: {
   studyLog: StudyLog;
   onSelectView: (view: TeacherView) => void;
@@ -449,6 +594,9 @@ function GlossaryView({
   onRenameTerm: (oldTerm: string, newTerm: string) => void;
   focusTerm: string | null;
   onFocusTerm: (term: string) => void;
+  highlights: GlossaryHighlight[];
+  onAddHighlight: (h: GlossaryHighlight) => void;
+  onRemoveHighlight: (h: GlossaryHighlight) => void;
 }) {
   const [query, setQuery] = useState("");
   const [courseFilter, setCourseFilter] = useState<string>("all");
@@ -585,6 +733,9 @@ function GlossaryView({
               onFocusTerm={onFocusTerm}
               isFocused={focusTerm?.toLowerCase() === t.term.toLowerCase()}
               concealed={memorizeMode}
+              highlights={highlights.filter((h) => h.termKey === t.term.toLowerCase())}
+              onAddHighlight={onAddHighlight}
+              onRemoveHighlight={onRemoveHighlight}
             />
           ))}
         </div>
@@ -603,6 +754,9 @@ function renderContent(
   onRenameGlossaryTerm: (oldTerm: string, newTerm: string) => void,
   glossaryFocusTerm: string | null,
   onFocusGlossaryTerm: (term: string) => void,
+  glossaryHighlights: GlossaryHighlight[],
+  onAddGlossaryHighlight: (h: GlossaryHighlight) => void,
+  onRemoveGlossaryHighlight: (h: GlossaryHighlight) => void,
   diagramLoadingKey: string | null,
   onGenerateDiagram: (view: TeacherView) => void,
   overviewLoadingKey: string | null,
@@ -620,6 +774,9 @@ function renderContent(
         onRenameTerm={onRenameGlossaryTerm}
         focusTerm={glossaryFocusTerm}
         onFocusTerm={onFocusGlossaryTerm}
+        highlights={glossaryHighlights}
+        onAddHighlight={onAddGlossaryHighlight}
+        onRemoveHighlight={onRemoveGlossaryHighlight}
       />
     );
   }
@@ -740,6 +897,9 @@ export default function TeacherPane({
   onRenameGlossaryTerm = () => {},
   glossaryFocusTerm = null,
   onFocusGlossaryTerm = () => {},
+  glossaryHighlights = [],
+  onAddGlossaryHighlight = () => {},
+  onRemoveGlossaryHighlight = () => {},
   diagramLoadingKey = null,
   onGenerateDiagram = () => {},
   overviewLoadingKey = null,
@@ -882,7 +1042,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

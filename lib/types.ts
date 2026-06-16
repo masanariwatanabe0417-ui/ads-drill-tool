@@ -49,11 +49,22 @@ export interface CourseData {
   overviewQuestionCount?: number; // 総括を生成した時点の総問題数。現在の問題数がこれより増えたら自動で作り直す
 }
 
+// 単語帳の任意範囲ハイライト（マーカー）。引用＋前後文脈でアンカーするため、
+// 定義文が再生成されて文言が変わると一致しなくなり自動で外れる（＝静かに消える）。
+export interface GlossaryHighlight {
+  termKey: string;  // 対象の用語（term.toLowerCase()）。どのカードのハイライトか
+  quote: string;    // 選択したテキストそのもの
+  prefix: string;   // 直前の文脈（同じ語が複数あるときの曖昧さ回避・最大20文字）
+  suffix: string;   // 直後の文脈（同上）
+  color: string;    // マーカー色。当面 "yellow" 固定。将来の多色化に備えて保持
+}
+
 export interface StudyLog {
   courses: CourseData[];
   glossaryOverrides?: Record<string, string>;    // term.toLowerCase() → カスタム定義文
   glossaryManualTerms?: Record<string, string>;  // 表示用term → 定義（手動追加用語）
   glossaryTermRenames?: Record<string, string>;  // 旧term.toLowerCase() → 修正後の表示用term（読み間違い等の手動修正）
+  glossaryHighlights?: GlossaryHighlight[];       // 単語帳のマーカー（任意範囲ハイライト）
 }
 
 export interface NewTermSuggestion {
