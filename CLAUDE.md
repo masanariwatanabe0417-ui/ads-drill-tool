@@ -2,8 +2,8 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: main / コミット: 5713041 / 状態: ⚠️ 未コミットあり
-- 最終作業: chore: handoff更新（単語帳手動追加・正解3問修正・スクショ整理を記録）
+- ブランチ: main / コミット: d9ec9fc / 状態: ✅ クリーン
+- 最終作業: chore: CLAUDE.md肥大化を解消（履歴の正本をNEXT_TASKS.mdに一本化）
 - 次候補: ★最新(2026-06-17)の完了分: CLAUDE.md肥大化を解消（講義5-7照合の指摘①）。真因=handoff…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
