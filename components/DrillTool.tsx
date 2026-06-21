@@ -685,6 +685,7 @@ export default function DrillTool() {
       <DrillSidePanel
         isOpen={isDrillPanelOpen}
         onClose={() => setIsDrillPanelOpen(false)}
+        onCapture={handleScreenshotUpload}
       />
       <div className="w-72 shrink-0">
         <NavigationPane
