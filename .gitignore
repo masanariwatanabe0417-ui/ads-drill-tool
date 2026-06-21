@@ -42,3 +42,8 @@ ads-drill-tool/
 # Claude Code が自動更新するファイル（コミット不要）
 .claude/settings.local.json
 NEXT_SESSION.md
+
+# ドリル自動取り込み（Playwright）の作業ファイル：ログインプロフィール・調査ダンプ
+scripts/.pw-profile/
+scripts/drill-dump.*
+scripts/.import-go

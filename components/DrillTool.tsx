@@ -17,63 +17,7 @@ import {
   TeacherView,
 } from "@/lib/types";
 import { aiFetch } from "@/lib/passcode";
-
-function makeCourseKey(series: string, course: string) {
-  return `${series}__${course}`;
-}
-
-function addToStudyLog(
-  log: StudyLog,
-  lessonInfo: ExtractedLessonInfo,
-  questionInfo: string,
-  keyLearning: string,
-  explanation: string
-): StudyLog {
-  const courseKey = makeCourseKey(lessonInfo.series, lessonInfo.course);
-  const courses = [...log.courses];
-
-  let courseIdx = courses.findIndex((c) => c.courseKey === courseKey);
-  if (courseIdx === -1) {
-    courses.push({
-      courseKey,
-      seriesName: lessonInfo.series,
-      courseName: lessonInfo.course,
-      lessons: [],
-    });
-    courseIdx = courses.length - 1;
-  }
-
-  const course = { ...courses[courseIdx], lessons: [...courses[courseIdx].lessons] };
-  let lessonIdx = course.lessons.findIndex((l) => l.lessonName === lessonInfo.lesson);
-  if (lessonIdx === -1) {
-    course.lessons.push({ lessonName: lessonInfo.lesson, questions: [] });
-    lessonIdx = course.lessons.length - 1;
-  }
-
-  // レッスンを Lesson 番号順にソート
-  course.lessons.sort((a, b) => {
-    const n = (s: string) => parseInt(s.match(/Lesson\s*(\d+)/i)?.[1] ?? "9999", 10);
-    return n(a.lessonName) - n(b.lessonName);
-  });
-  lessonIdx = course.lessons.findIndex((l) => l.lessonName === lessonInfo.lesson);
-
-  const lesson = { ...course.lessons[lessonIdx], questions: [...course.lessons[lessonIdx].questions] };
-  const entry = { questionInfo, keyLearning, explanation, timestamp: Date.now() };
-  const existingIdx = lesson.questions.findIndex((q) => q.questionInfo === questionInfo);
-  if (existingIdx !== -1) {
-    lesson.questions[existingIdx] = entry;
-  } else {
-    lesson.questions.push(entry);
-    lesson.questions.sort((a, b) => {
-      const n = (s: string) => parseInt(s.replace(/\D/g, ""), 10) || 0;
-      return n(a.questionInfo) - n(b.questionInfo);
-    });
-  }
-
-  course.lessons[lessonIdx] = lesson;
-  courses[courseIdx] = course;
-  return { courses };
-}
+import { addToStudyLog, makeCourseKey } from "@/lib/studyLog";
 
 function findExplanation(studyLog: StudyLog, view: TeacherView): string {
   if (view?.type !== "question") return "";
