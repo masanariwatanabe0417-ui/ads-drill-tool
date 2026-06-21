@@ -19,13 +19,47 @@ type ImportPayload = {
   options: string[];          // 選択肢ラベル一覧（並べ替えでは「並べる項目」）
   correctAnswer?: string;     // 正解の選択肢ラベル（並べ替えには無い）
   drillExplanation?: string;  // ドリルが回答後に出す「マスターのワンポイント」本文
-  kind?: "choice" | "ordering"; // 問題形式。ordering=並べ替え（正解は単一ラベルでなく順序）
+  kind?: "choice" | "ordering"; // 取り込みスクリプトが送る形式。ordering=並べ替え
 };
 
+// サーバー側で確定する問題形式。truefalse=○✕（正誤判定）は choice から検出して分離する。
+// （○✕は選択肢が「正しい/間違い」の2択しかないため、多択用の「間違い選択肢のどこが違う？」
+//   テンプレートを当てると日本語が破綻する＝旧来の痛み。専用見出し構成に切り替える。）
+type QuestionKind = "choice" | "ordering" | "truefalse";
+
+const TRUE_TOKENS = new Set(["正しい", "○", "◯", "まる", "true", "yes", "はい"]);
+const FALSE_TOKENS = new Set(["間違い", "間違っている", "✕", "×", "ばつ", "false", "no", "いいえ"]);
+
+// ○✕（正誤判定）問題かを選択肢から判定する。選択肢が2つで、一方が真トークン・
+// 他方が偽トークンのときだけ truefalse とみなす（多択を誤検出しない）。
+function detectKind(p: ImportPayload): QuestionKind {
+  if (p.kind === "ordering") return "ordering";
+  const opts = (p.options ?? []).map((o) => o.trim().toLowerCase());
+  if (opts.length === 2) {
+    const hasTrue = opts.some((o) => TRUE_TOKENS.has(o));
+    const hasFalse = opts.some((o) => FALSE_TOKENS.has(o));
+    if (hasTrue && hasFalse) return "truefalse";
+  }
+  return "choice";
+}
+
 // 問題・選択肢・正解・ドリル解説を1つのテキストにまとめる（生成エージェントへの入力）。
-function buildQuestionText(p: ImportPayload): string {
+function buildQuestionText(p: ImportPayload, kind: QuestionKind): string {
+  // ○✕（正誤判定）問題: 問題文は「主張」で、正解は その主張が正しい/間違いか。
+  if (kind === "truefalse") {
+    const lines = [
+      `問題（${p.questionInfo}）[正誤判定]: ${p.questionText}`,
+      `これは「正しい」か「間違い」かを判定する○✕問題です（選択肢は2つだけ）。`,
+      `正解: この主張は「${p.correctAnswer ?? "(不明)"}」`,
+    ];
+    if (p.drillExplanation && p.drillExplanation.trim()) {
+      lines.push(`ドリル公式の解説（参考。これを噛み砕いて自分の言葉で説明する）:\n${p.drillExplanation.trim()}`);
+    }
+    return lines.join("\n");
+  }
+
   // 並べ替え問題: 正解は「順序」で、その順序はドリル解説の中に示される。
-  if (p.kind === "ordering") {
+  if (kind === "ordering") {
     const lines = [
       `問題（${p.questionInfo}）[並べ替え]: ${p.questionText}`,
       `並べる項目（提示順。正しい順序ではない）:`,
@@ -134,23 +168,35 @@ ${questionText}
 // 解説本文＋keyLearning（画像ルートの generateExplanation をテキスト入力にしたもの。出力形式は同一）。
 async function generateExplanation(
   questionText: string,
-  kind: "choice" | "ordering"
+  kind: QuestionKind
 ): Promise<{ keyLearning: string; mainContent: string }> {
-  // 形式ごとに本文の見出し構成を変える（並べ替えには「間違い選択肢」が無い）。
-  const contentDesc =
-    kind === "ordering"
-      ? "Markdown形式の解説本文。## 問題 / ## 正しい順序 / ## なぜこの順序なのか / ## 覚えるポイント の見出し構成"
-      : "Markdown形式の解説本文。## 問題 / ## 正解 / ## なぜこれが正解？ / ## 間違い選択肢のどこが違う？ / ## 覚えるポイント の見出し構成";
-  const bodyInstruction =
-    kind === "ordering"
-      ? `- これは「並べ替え（順序）問題」です。正しい順序はドリル解説に示されています
-- 各段階が「なぜその順番なのか（前の段階が次の前提になる等）」を中心に説明してください`
-      : `- 問題と正解を一体で説明し「なぜその答えなのか」を中心に解説してください
+  // 形式ごとに本文の見出し構成を変える。
+  //   ordering=並べ替え（「間違い選択肢」が無い）
+  //   truefalse=○✕（選択肢が「正しい/間違い」の2択のみ＝「間違い選択肢」概念が無い）
+  //   choice=多択（間違い選択肢を1つずつ解説）
+  let contentDesc: string;
+  let bodyInstruction: string;
+  let mainContentTemplate: string;
+  if (kind === "ordering") {
+    contentDesc =
+      "Markdown形式の解説本文。## 問題 / ## 正しい順序 / ## なぜこの順序なのか / ## 覚えるポイント の見出し構成";
+    bodyInstruction = `- これは「並べ替え（順序）問題」です。正しい順序はドリル解説に示されています
+- 各段階が「なぜその順番なのか（前の段階が次の前提になる等）」を中心に説明してください`;
+    mainContentTemplate = `## 問題\\n（何を順番に並べる問題かを1〜2文で）\\n\\n## 正しい順序\\n（正しい並び順を 1. → 2. → 3. … の番号付きで、各項目をわかりやすい日本語で）\\n\\n## なぜこの順序なのか\\n（各段階が次の前提になる理由を順に説明）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）`;
+  } else if (kind === "truefalse") {
+    contentDesc =
+      "Markdown形式の解説本文。## 問題 / ## 答え / ## なぜそう言えるのか / ## 引っかかりやすいポイント / ## 覚えるポイント の見出し構成";
+    bodyInstruction = `- これは「正しいか間違いか」を判定する○✕問題です。選択肢は「正しい」「間違い」の2つだけで、片方が正解です
+- 問題文の主張が、なぜ「正しい」または「間違い」と言えるのかを中心に説明してください
+- 「間違い選択肢」という概念はありません。代わりに「## 引っかかりやすいポイント」で、なぜ反対の答えを選びそうになるか・どこを誤解しやすいかを説明してください`;
+    mainContentTemplate = `## 問題\\n（問題文の主張を、原文そのままではなくわかりやすい日本語で「〜という主張」の形に1〜2文で言い換えて）\\n\\n## 答え\\n（「正しい」か「間違い」かを明記し、一言で結論を）\\n\\n## なぜそう言えるのか\\n（その主張が正しい／間違いと言える理由を、原文をそのまま使わず自分の言葉で2〜4文で）\\n\\n## 引っかかりやすいポイント\\n（なぜ反対の答えを選びそうになるか・どこを誤解しやすいかを1〜2文で）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）`;
+  } else {
+    contentDesc =
+      "Markdown形式の解説本文。## 問題 / ## 正解 / ## なぜこれが正解？ / ## 間違い選択肢のどこが違う？ / ## 覚えるポイント の見出し構成";
+    bodyInstruction = `- 問題と正解を一体で説明し「なぜその答えなのか」を中心に解説してください
 - 間違い選択肢は1つずつ「どこが違うのか」を具体的に説明してください`;
-  const mainContentTemplate =
-    kind === "ordering"
-      ? `## 問題\\n（何を順番に並べる問題かを1〜2文で）\\n\\n## 正しい順序\\n（正しい並び順を 1. → 2. → 3. … の番号付きで、各項目をわかりやすい日本語で）\\n\\n## なぜこの順序なのか\\n（各段階が次の前提になる理由を順に説明）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）`
-      : `## 問題\\n（問題文を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜3文で）\\n\\n## 正解\\n（正解の選択肢を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜2文で）\\n\\n## なぜこれが正解？\\n（問題と正解をセットで、「〜だから正解は◯」のように理由から説明。原文をそのまま使わず自分の言葉で）\\n\\n## 間違い選択肢のどこが違う？\\n（各選択肢ごとに「選択肢X：〜だからNG」と1〜2文で説明）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）`;
+    mainContentTemplate = `## 問題\\n（問題文を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜3文で）\\n\\n## 正解\\n（正解の選択肢を原文そのままではなく、もっとわかりやすい日本語に言い換えて1〜2文で）\\n\\n## なぜこれが正解？\\n（問題と正解をセットで、「〜だから正解は◯」のように理由から説明。原文をそのまま使わず自分の言葉で）\\n\\n## 間違い選択肢のどこが違う？\\n（各選択肢ごとに「選択肢X：〜だからNG」と1〜2文で説明）\\n\\n## 覚えるポイント\\n（この問題から持ち帰るべき核心を1〜3点）`;
+  }
 
   const message = await client.beta.messages.create({
     model: "claude-haiku-4-5",
@@ -215,8 +261,8 @@ export async function POST(req: Request) {
       );
     }
 
-    const kind = p.kind === "ordering" ? "ordering" : "choice";
-    const questionText = buildQuestionText(p);
+    const kind = detectKind(p);
+    const questionText = buildQuestionText(p, kind);
 
     // 用語解説と解説本文を並列生成（画像ルートと同じ構成）
     const [glossary, explanationData] = await Promise.all([
