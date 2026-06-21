@@ -1,7 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { addToStudyLog } from "@/lib/studyLog";
 import { readStudyLog, writeStudyLog } from "@/lib/studyLogStore";
-import type { ExtractedLessonInfo } from "@/lib/types";
+import type { ExtractedLessonInfo, StudyLog } from "@/lib/types";
 
 export const runtime = "nodejs";
 
@@ -251,6 +251,24 @@ ${questionText}
   return composeExplanation(parsed);
 }
 
+// シリーズ名のブレ吸収（同一コースが別シリーズ名で分裂するのを防ぐ）。
+// ドリルのDOM「学習中のシリーズ」は末尾の「シリーズ」を落とすことがあり
+// （例: 画像取込「Next.jsとデプロイシリーズ」 vs 自動取込「Next.jsとデプロイ」）、
+// courseKey=`${series}__${course}` がずれて同じコースが2つに割れる。
+// 既存studyLogに「末尾の"シリーズ(（…）)?"を除けば一致するシリーズ名」かつ
+// 「同じコース名」のコースが一意に在れば、その正本シリーズ名にスナップする。
+// （同名コースが複数シリーズにある「シリーズツアー」のような罠を避けるため
+//   コース名一致を必須にし、候補が一意でないときは触らない。）
+function reconcileSeriesName(log: StudyLog, series: string, course: string): string {
+  const stripSeries = (s: string) => s.replace(/シリーズ(（[^）]*）)?\s*$/, "").trim();
+  const key = stripSeries(series);
+  const names = log.courses
+    .filter((c) => c.courseName === course && stripSeries(c.seriesName) === key)
+    .map((c) => c.seriesName)
+    .filter((name, i, arr) => arr.indexOf(name) === i);
+  return names.length === 1 ? names[0] : series;
+}
+
 export async function POST(req: Request) {
   try {
     const p = (await req.json()) as ImportPayload;
@@ -274,8 +292,10 @@ export async function POST(req: Request) {
 
     // 永続化 studyLog に1問マージ保存（read → addToStudyLog → write）。
     // スクリプトから1問ずつ直列に呼ばれる前提（同時書き込みは想定しない）。
-    const lessonInfo: ExtractedLessonInfo = { series: p.series, course: p.course, lesson: p.lesson };
     const current = await readStudyLog();
+    // 既存コースに合わせてシリーズ名のブレを吸収してから保存（分裂防止）
+    const series = reconcileSeriesName(current, p.series, p.course);
+    const lessonInfo: ExtractedLessonInfo = { series, course: p.course, lesson: p.lesson };
     const updated = addToStudyLog(current, lessonInfo, p.questionInfo, explanationData.keyLearning ?? "", explanation);
     await writeStudyLog(updated);
 
