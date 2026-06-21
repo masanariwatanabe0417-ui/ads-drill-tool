@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: experiment-drill-autoimport / コミット: d838d9a / 状態: ✅ クリーン
-- 最終作業: feat: ドリル自動取り込み（Playwrightで1レッスン一括・○✕/多択/並べ替え対応）
-- 次候補: ★最新(2026-06-21)の完了分③ ドリル自動取り込み（experiment-drill-autoimportブラ…（詳細・残り候補は NEXT_TASKS.md）
+- ブランチ: experiment-drill-autoimport / コミット: 50b995d / 状態: ✅ クリーン
+- 最終作業: docs: 作業履歴更新（○✕解説修正・シリーズ分裂修正④⑤を記録／①完了・②③残りに更新）
+- 次候補: ★最新(2026-06-21)の完了分④⑤ 先生ペインの解説修正＋シリーズ分裂修正（experiment-drill-a…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
