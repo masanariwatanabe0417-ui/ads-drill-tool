@@ -178,6 +178,22 @@ const markdownComponents: Components = {
   ),
 };
 
+// 問題ビュー専用のMarkdown装飾。トップの「## 問題 / ## 回答 / ## 解説 / ## 用語」を
+// セクションの帯（バナー）として描画し、4ブロックを視覚的に区切る。
+// 解説内の小見出しは「### 〜」なので h3（控えめなラベル）として残す。
+// まとめ（総括）の h2 装飾には影響させないため ExplanationView 専用にする。
+const questionMarkdownComponents: Components = {
+  ...markdownComponents,
+  h2: ({ children }) => (
+    <h2 className="flex items-center text-sm font-bold text-primary bg-primary/5 border-l-4 border-primary rounded-r px-3 py-1.5 mt-6 mb-2 first:mt-0">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="text-sm font-semibold text-foreground/90 mt-3 mb-1">{children}</h3>
+  ),
+};
+
 // ── ステップガイド（空状態）────────────────────────────────────────
 const STEPS = [
   {
@@ -1075,7 +1091,7 @@ function ExplanationView({
 
   return (
     <div className="prose-sm max-w-none" onMouseUp={handleMouseUp}>
-      <ReactMarkdown components={markdownComponents}>{explanation}</ReactMarkdown>
+      <ReactMarkdown components={questionMarkdownComponents}>{explanation}</ReactMarkdown>
       {button}
 
       {draft && (
