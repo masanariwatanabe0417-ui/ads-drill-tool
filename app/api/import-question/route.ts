@@ -86,6 +86,18 @@ function buildQuestionText(p: ImportPayload, kind: QuestionKind): string {
   return lines.join("\n");
 }
 
+// 選択肢ラベル o が正解 correct と一致するか。
+// 実ドリルの選択肢テキストは先頭に「A」「B」…の記号が付く（例「B部品を…」）一方、
+// DOMから読む正解ラベルは記号なし（例「部品を…」）なので、完全一致だけだと印が当たらない。
+// 「o が correct で終わり、その差が短い接頭ラベル（1〜2字）」も一致とみなす。
+// （合成データのように記号が無い場合は完全一致で拾えるので影響なし。）
+function optionMatchesCorrect(option: string, correct: string): boolean {
+  const o = option.trim();
+  if (!correct) return false;
+  if (o === correct) return true;
+  return o.endsWith(correct) && o.length - correct.length <= 2;
+}
+
 // 「## 回答」セクションの本文を、ドリル原文の選択肢・正解のまま組み立てる（AIに通さない）。
 // 正解の選択肢には印を付ける。並べ替えは正解が単一ラベルでないため項目だけ列挙する。
 function buildAnswerBlock(p: ImportPayload, kind: QuestionKind): string {
@@ -103,7 +115,7 @@ function buildAnswerBlock(p: ImportPayload, kind: QuestionKind): string {
   const lines: string[] = [];
   let marked = false;
   for (const o of opts) {
-    if (correct && o.trim() === correct) {
+    if (optionMatchesCorrect(o, correct)) {
       lines.push(`- **${o}** ✅ 正解`);
       marked = true;
     } else {
