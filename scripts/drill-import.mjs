@@ -70,12 +70,12 @@ console.log("==============================================\n");
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// 問題画面（解答ボタンが出ている状態）になるまで最大3分待つ＝ユーザーがログイン・移動する時間。
+// 問題画面（解答ボタンが出ている状態）になるまで最大10分待つ＝ユーザーがログイン・移動する時間。
 // この待機中、ホーム画面に「学習中のシリーズ」が見えていればシリーズ名を先取りして覚えておく。
 // （クイズ画面に入るとシリーズ名がDOMから消えるため、ここで拾えないと空になる）
-console.log("問題画面（解答ボタン）が表示されるのを待っています…（最大3分）");
+console.log("問題画面（解答ボタン）が表示されるのを待っています…（最大10分）");
 let capturedSeries = "";
-const waitDeadline = Date.now() + 180000;
+const waitDeadline = Date.now() + 600000;
 while (Date.now() < waitDeadline) {
   const s = await page
     .evaluate(() => {
@@ -90,7 +90,7 @@ while (Date.now() < waitDeadline) {
   await sleep(1000);
 }
 if (!(await page.$('[data-testid^="quiz-answer-option-"]'))) {
-  console.log("問題画面を検出できませんでした（3分経過）。終了します。");
+  console.log("問題画面を検出できませんでした（10分経過）。終了します。");
   await ctx.close().catch(() => {});
   process.exit(1);
 }
@@ -122,9 +122,46 @@ async function readState() {
       }
     }
 
+    // 指示文（「選択肢から選んでください」「正しい順番に並べてね」「タップして接続」など）を拾う。
+    // 形式判定（並べ替え/マッチング/選択式）に使う。
+    let instruction = "";
+    for (const el of document.querySelectorAll('div[dir="auto"]')) {
+      if (el.querySelector('div[dir="auto"]')) continue;
+      const t = norm(el.textContent);
+      if (/選んでください|選択肢から選|正しい順番に並べ|並べてね|タップして接続|正しいか間違いか/.test(t) && t.length <= 30) {
+        instruction = t;
+        break;
+      }
+    }
+
+    // マッチング（線結び）判定: 画面に「ペア完成」マーカーがある（マッチング画面のみに出る）。
+    const isMatching = /ペア完成/.test(document.body.innerText || "");
+
+    // マッチングの右項目: 全選択肢を含む最小の共通祖先（問題コンテナ）内の、
+    // tabindex を持つが data-testid が無いタップ可能 div。左項目テキストは除外。
+    // （SPA がホーム画面を DOM に残すため、document 全体から拾うとカードが混入する＝コンテナ限定が必須。）
+    let rightItems = [];
+    if (isMatching && optEls.length >= 2) {
+      let container = optEls[0];
+      while (container && !optEls.every((o) => container.contains(o))) container = container.parentElement;
+      if (container) {
+        const leftSet = new Set(options);
+        for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
+          const t = norm(el.textContent);
+          if (!t || t.length > 40) continue;
+          if (leftSet.has(t)) continue;
+          if (rightItems.includes(t)) continue;
+          rightItems.push(t);
+        }
+      }
+    }
+
     // 並べ替え問題の判定: 選択肢に aria-label が無い（通常の選択式は aria=ラベルが付く）。
+    // ただしマッチングは別扱い、また「選んでください」系の指示は単一選択（aria無しでも選択式）。
     // 回答前のこの状態でしか選択肢が読めない（回答後は選択肢が消える）。
-    const isOrdering = optEls.length >= 2 && opts.every((o) => !o.aria);
+    const isSelectPrompt = /選んでください|選択肢から選/.test(instruction);
+    const isOrdering =
+      !isMatching && optEls.length >= 2 && opts.every((o) => !o.aria) && !isSelectPrompt;
 
     // Q番号・総数
     let qnum = null, total = null;
@@ -192,7 +229,7 @@ async function readState() {
       if (i !== -1 && texts[i + 1]) series = texts[i + 1];
     }
 
-    return { options, correctAnswer, isOrdering, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
+    return { options, correctAnswer, isOrdering, isMatching, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
   });
 }
 
@@ -243,12 +280,44 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   if (seen.has(s.qnum)) { console.log(`${s.qnum} は処理済み。進まなくなったため終了します。`); break; }
   seen.add(s.qnum);
 
-  const kind = s.isOrdering ? "ordering" : "choice";
-  console.log(`[${s.qnum}]${s.isOrdering ? "[並べ替え]" : ""} ${s.questionText.slice(0, 40)}…  項目=${JSON.stringify(s.options)}`);
+  const kind = s.isMatching ? "matching" : s.isOrdering ? "ordering" : "choice";
+  const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : "";
+  console.log(
+    `[${s.qnum}]${kindLabel} ${s.questionText.slice(0, 40)}…  左=${JSON.stringify(s.options)}` +
+      (s.isMatching ? ` 右=${JSON.stringify(s.rightItems)}` : "")
+  );
 
   // まだ回答していなければ回答する
   if (!s.answered) {
-    if (s.isOrdering) {
+    if (s.isMatching) {
+      // マッチング（線結び）: 左[i] をタップ → 右[i] をタップ で1ペア接続、を全ペア繰り返す。
+      // 正誤は問わない（解説に正しい対応が含まれる／88%閾値で1つ外れても完了する）。
+      const pairCount = Math.min(s.options.length, s.rightItems.length);
+      for (let i = 0; i < pairCount; i++) {
+        await page.click(`[data-testid="quiz-answer-option-${i}"]`, { timeout: 5000 }).catch(() => {});
+        await sleep(500);
+        // 右項目は data-testid が無いため、問題コンテナ内をテキストで特定して一時タグ付け→クリック。
+        await page.evaluate(
+          ({ idx, label }) => {
+            const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+            const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
+            let container = leftEls[0] || document.body;
+            while (container && !leftEls.every((o) => container.contains(o))) container = container.parentElement;
+            container = container || document.body;
+            document.querySelectorAll("[data-import-ri]").forEach((el) => el.removeAttribute("data-import-ri"));
+            for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
+              if (norm(el.textContent) === label) { el.setAttribute("data-import-ri", String(idx)); break; }
+            }
+          },
+          { idx: i, label: s.rightItems[i] }
+        );
+        await page.click(`[data-import-ri="${i}"]`, { timeout: 5000 }).catch(() => {});
+        await sleep(500);
+      }
+      await sleep(400);
+      await page.click('[data-testid="quiz-submit"]', { timeout: 5000 }).catch(() => {});
+      await page.getByText("確定", { exact: true }).first().click({ timeout: 3000 }).catch(() => {});
+    } else if (s.isOrdering) {
       // 並べ替え: 残っている選択肢を上から順にタップ（タップすると消える）。
       for (let k = 0; k < s.options.length + 1; k++) {
         const remaining = await page.$$('[data-testid^="quiz-answer-option-"]');
@@ -270,20 +339,22 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   await page.waitForSelector('[data-testid="quiz-feedback"]', { timeout: 15000 }).catch(() => {});
   const a = await readState();
 
-  // 並べ替えは正解が単一ラベルでなく「順序」→ 正解ラベルではなく解説(順序を含む)が取れればOK
-  const captured = s.isOrdering ? !!a.explanation : !!a.correctAnswer;
+  // 並べ替え・マッチングは正解が単一ラベルでなく解説に正しい対応/順序が含まれる→解説が取れればOK
+  const captured = s.isOrdering || s.isMatching ? !!a.explanation : !!a.correctAnswer;
   if (!captured) {
-    console.log(`  ⚠ ${s.isOrdering ? "解説" : "正解"}を取得できませんでした（${s.qnum}）。この問はスキップします。`);
-    // 並べ替えで取得失敗時は、回答確定後（または確定UI待ち）のDOMをデバッグ保存して原因を追えるようにする
-    if (s.isOrdering) {
+    console.log(`  ⚠ ${s.isOrdering || s.isMatching ? "解説" : "正解"}を取得できませんでした（${s.qnum}）。この問はスキップします。`);
+    // 取得失敗時は、回答確定後（または確定UI待ち）のDOMをデバッグ保存して原因を追えるようにする
+    if (s.isOrdering || s.isMatching) {
       try {
-        const dbg = path.join(__dirnameEarly, `drill-dump.ordering-debug-${s.qnum}.html`);
+        const tag = s.isMatching ? "matching" : "ordering";
+        const dbg = path.join(__dirnameEarly, `drill-dump.${tag}-debug-${s.qnum}.html`);
         fs.writeFileSync(dbg, await page.content(), "utf-8");
         console.log(`    (デバッグ: ${dbg} を保存)`);
       } catch {}
     }
   } else {
-    if (s.isOrdering) console.log(`  → [並べ替え] 判定: ${a.verdict} / 正解順は解説に含む`);
+    if (s.isMatching) console.log(`  → [線結び] 判定: ${a.verdict} / 正しい対応は解説に含む`);
+    else if (s.isOrdering) console.log(`  → [並べ替え] 判定: ${a.verdict} / 正解順は解説に含む`);
     else console.log(`  → 正解: ${a.correctAnswer} / 判定: ${a.verdict}`);
     try {
       const res = await fetch(API, {
@@ -295,6 +366,7 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
           questionInfo: s.qnum,
           questionText: s.questionText,
           options: s.options,
+          rightItems: s.isMatching ? s.rightItems : undefined,
           correctAnswer: a.correctAnswer ?? undefined,
           drillExplanation: a.explanation,
         }),
