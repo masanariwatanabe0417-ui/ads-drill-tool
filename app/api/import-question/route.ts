@@ -159,6 +159,16 @@ function buildAnswerBlock(p: ImportPayload, kind: QuestionKind): string {
   }
   // choice / truefalse: 選択肢を原文のまま列挙し、正解に印を付ける。
   const correct = (p.correctAnswer ?? "").trim();
+  // aria-label が無い選択問題は正解を確実に読めない（correctAnswer が来ない）。
+  // その場合は誤った印を付けず、正解は「解説」に委ねる（ordering/matching と同じ方針）。
+  if (!correct) {
+    return [
+      "選択問題です。正解は下の「解説」を参照してください。",
+      "",
+      "選択肢:",
+      ...opts.map((o) => `- ${o}`),
+    ].join("\n");
+  }
   const lines: string[] = [];
   let marked = false;
   for (const o of opts) {

@@ -121,6 +121,11 @@ async function readState() {
         break;
       }
     }
+    // 注意: aria-label が無い選択問題（例「選択肢から選んでください」）は、正解を
+    // DOM から確実には読めない。回答後に付く r-lrvibr マーカーは「正解」ではなく
+    // 「自分が選んだ選択肢」を示す（誤答時はその誤答に付く）ため正解読みには使えない。
+    // よってこの種の問題では correctAnswer は null のままにし、正解はドリル公式解説
+    // （drillExplanation）に委ねる（サーバ側で「正解は解説参照」の回答ブロックになる）。
 
     // 指示文（「選択肢から選んでください」「正しい順番に並べてね」「タップして接続」など）を拾う。
     // 形式判定（並べ替え/マッチング/選択式）に使う。
@@ -272,6 +277,12 @@ console.log("");
 const seen = new Set();
 let imported = 0;
 
+// ONLY="Q5,Q7" を指定すると、その問だけ保存（POST）し、他は巡回（解答して次へ）のみ。
+// 既に良好に取り込めた問を上書きせず、特定問だけ再検証・修正したいときに使う。
+const onlyTargets = process.env.ONLY
+  ? new Set(process.env.ONLY.split(",").map((x) => x.trim()).filter(Boolean))
+  : null;
+
 for (let i = 0; i < MAX_QUESTIONS; i++) {
   // 解答ボタンが出るまで待つ（次問の読み込み待ち）
   await page.waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 }).catch(() => {});
@@ -339,6 +350,10 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   await page.waitForSelector('[data-testid="quiz-feedback"]', { timeout: 15000 }).catch(() => {});
   const a = await readState();
 
+  // ONLY フィルタ: 対象外の問は保存せず巡回のみ（解答済みなので次へ進むだけ）。
+  if (onlyTargets && !onlyTargets.has(s.qnum)) {
+    console.log(`  (ONLY フィルタ: ${s.qnum} は保存スキップ)`);
+  } else {
   // 並べ替え・マッチングは正解が単一ラベルでなく解説に正しい対応/順序が含まれる→解説が取れればOK
   const captured = s.isOrdering || s.isMatching ? !!a.explanation : !!a.correctAnswer;
   if (!captured) {
@@ -382,6 +397,7 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
       console.log(`  ✗ APIに接続できません（dev サーバは起動中？）: ${e.message}`);
     }
   }
+  } // end ONLY フィルタ
 
   // 最終問題か判定: 「次の問題へ」が無ければ終了
   const next = page.getByText("次の問題へ", { exact: true });
