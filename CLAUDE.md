@@ -2,8 +2,8 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: experiment-drill-autoimport / コミット: bab7b3a / 状態: ⚠️ 未コミットあり
-- 最終作業: docs: 作業履歴更新（Q5 aria無し選択の是正・Lesson3全9問完全化を記録）
+- ブランチ: experiment-drill-autoimport / コミット: 940cb07 / 状態: ⚠️ 未コミットあり
+- 最終作業: chore: handoff更新（state行を最新コミットに）
 - 次候補: ★最新(2026-06-26) ①マッチング(線結び)対応 完了＋Lesson3完全化(Q5 aria無し選択 是正含む…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
