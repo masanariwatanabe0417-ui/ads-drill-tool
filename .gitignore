@@ -47,3 +47,4 @@ NEXT_SESSION.md
 scripts/.pw-profile/
 scripts/drill-dump.*
 scripts/.import-go
+scripts/_dump_archive_prev/
