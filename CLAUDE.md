@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: experiment-drill-autoimport / コミット: a878ff6 / 状態: ✅ クリーン
-- 最終作業: feat: 復習突破に「自己訂正リプレイ」追加＋NO_IMPORT replayで③をライブ実証
-- 次候補: ★最新(2026-06-27e) ③ライブ実証＋「自己訂正リプレイ」実装で復習突破を堅牢化（experiment-dri…（詳細・残り候補は NEXT_TASKS.md）
+- ブランチ: experiment-drill-autoimport / コミット: 84a1b92 / 状態: ✅ クリーン
+- 最終作業: docs: (a)実取り込みで③をコース1本通し最終確認＝Webの世界 全8レッスン80問ライブ成功を記録
+- 次候補: ★最新(2026-06-27f) (a)実取り込みで③をコース1本通して最終確認＝Web開発基礎/Webの世界 全8レッ…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
