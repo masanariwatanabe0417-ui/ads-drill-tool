@@ -194,6 +194,32 @@ export async function fetchIndex(studyLogApi, log = console.log) {
   }
 }
 
+// 回答後フィードバックの緑枠 rgb(22,163,74) が付いた選択肢テキストを「正解」として読む（自己訂正用）。
+// 選択式/○✕/1空欄cloze はこれで正解1つが取れる。複数空欄clozeは緑が複数＝順序は best effort（seqで返す）。
+export async function readCorrectFromFeedback(page, s) {
+  // 線結び/並べ替えは「正解」が複数セルの対応・順序であり、緑枠1セルでは復元できない。
+  // 単一セルを誤って学習するとリトライを浪費するため学習せず null を返す（呼び出し側が診断DOMを残す）。
+  // ※実取り込みでは線結び/並べ替えは取込直後の studyLog 保存ペア/順序で突破するため、ここに来るのは
+  //   未取り込み（replay）や studyLog 照合ミスの稀ケースのみ。
+  if (s.isMatching || s.isOrdering) return null;
+  const greens = await page
+    .evaluate(() => {
+      const strip = (x) => (x || "").replace(/[-]/g, "");
+      const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+      const isGreen = (e) => {
+        const c = getComputedStyle(e);
+        return /22,\s*163,\s*74/.test(c.borderColor) || /22,\s*163,\s*74/.test(c.backgroundColor);
+      };
+      return [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')]
+        .filter(isGreen)
+        .map((e) => strip(norm(e.textContent)))
+        .filter(Boolean);
+    })
+    .catch(() => []);
+  if (!greens.length) return null;
+  return s.isCloze ? { seq: greens } : { text: greens[0] };
+}
+
 // 復習ループ＋完了処理。「復習 Q1 の問題画面に居る」前提で呼ぶ。
 //   page    : Playwright Page（クイズ画面）
 //   index   : buildIndex/fetchIndex で作った既知問題インデックス
@@ -214,6 +240,13 @@ export async function clearReview(page, index, opts = {}) {
   const seen = new Set();
   let known = 0;
   const unknownList = [];
+  // 自己訂正リプレイ: 復習は誤答だと同じ問題を再提示する（正答するまで前進できない）。そこで、不正解に
+  // なったら回答後フィードバックの緑枠(rgb(22,163,74))から正解を読み取り、再提示時にその正解で答え直す。
+  // corrections: sig -> { text } / { seq }（学習した正解）  attempts: sig -> 試行回数（周回の打ち切り用）。
+  const corrections = new Map();
+  const attempts = new Map();
+  const MAX_ATTEMPTS = 6;
+  let corrected = 0;
 
   for (let i = 0; i < maxQuestions; i++) {
     // 「復習タイム！」オーバーレイ（＝誤答のみ復習の開始画面）を処理する。
@@ -252,13 +285,26 @@ export async function clearReview(page, index, opts = {}) {
     // qnum 基準だと別問を「処理済み」と誤判定して早期終了する。実ライブで確認）。
     const sig = normKey(s.questionText) || s.qnum || "";
     if (!sig) { log("問題を取得できませんでした。終了します。"); break; }
-    if (seen.has(sig)) { log(`同じ問題（${s.qnum || "?"}）が再表示＝進まなくなったため終了します。`); break; }
+    // 自己訂正のため「再提示＝即終了」はしない。正解を学習できず周回する場合のみ試行回数で打ち切る。
+    if ((attempts.get(sig) || 0) >= MAX_ATTEMPTS) {
+      log(`同じ問題（${s.qnum || "?"}）を${attempts.get(sig)}回試しても通過できず停止します。`);
+      break;
+    }
     seen.add(sig);
 
     const hit = lookup(index, s.questionText);
     const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? "[穴埋め]" : "[選択]";
 
-    if (!s.answered) {
+    const corr = corrections.get(sig);
+    if (!s.answered && corr) {
+      // --- 自己訂正: 前回の不正解後にフィードバックから読んだ正解で答え直す（全タイプ共通の最終手段）---
+      corrected += 1;
+      log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corr.text ?? (corr.seq || []).join(" / ")}」で再回答`);
+      if (s.isCloze) await answerCloze(page, corr.seq?.length ? corr.seq : (corr.text ? [corr.text] : []), s.clozeBlanks);
+      else if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
+      else if (s.isOrdering) await answerOrdering(page, s, hit?.order ?? []);
+      else await answerChoice(page, { correctText: corr.text ?? null, index: 0, log });
+    } else if (!s.answered) {
       if (s.isCloze) {
         // cloze（複数空欄）: 保存解説から空欄順の正解シーケンスを導き、順にタップ→確定。
         const seq = hit ? extractClozeSequence(hit.expl, s.options, s.clozeBlanks) : [];
@@ -321,10 +367,20 @@ export async function clearReview(page, index, opts = {}) {
     await page.waitForSelector('[data-testid="quiz-feedback"]', { timeout: 15000 }).catch(() => {});
     const a = await readState(page);
     if (a.verdict) log(`     判定: ${a.verdict}`);
-    // 既知の正解で答えたのに不正解＝照合ズレ等の疑い。原因追跡用にDOMを残す（診断）。
-    if (hit && a.verdict && /不正解|残念/.test(a.verdict)) {
-      try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), await page.content(), "utf-8"); } catch {}
-      log(`     ⚠ 既知なのに不正解。診断DOMを保存（drill-dump.review-wrong-${s.qnum || "x"}.html）`);
+    attempts.set(sig, (attempts.get(sig) || 0) + 1);
+    if (a.verdict && /不正解|残念/.test(a.verdict)) {
+      // 不正解 → 回答後フィードバックの緑枠から正解を読み取り、再提示に備えて記録（自己訂正リプレイ）。
+      // 診断DOMは「フィードバック直後・他操作の前」に同期で確保する（遷移フラッシュでホームを撮る racy 防止）。
+      let wrongHtml = null;
+      try { wrongHtml = await page.content(); } catch {}
+      const learned = await readCorrectFromFeedback(page, s);
+      if (learned && (learned.text || learned.seq?.length)) {
+        corrections.set(sig, learned);
+        log(`     ✎ 正解を学習: 「${learned.text ?? learned.seq.join(" / ")}」（再提示されたらこれで答え直す）`);
+      } else {
+        if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
+        log(`     ⚠ 不正解だが緑枠から正解を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+      }
     }
 
     // 次へ進む。通常問は「次の問題へ」だが、最終問は結果/完了画面へ進む別ラベルのことがある。
@@ -403,13 +459,14 @@ export async function clearReview(page, index, opts = {}) {
 
   log("\n=== サマリ ===");
   log(`  既知（保存済み正解で自動回答）: ${known} 問`);
+  log(`  自己訂正（不正解→緑枠の正解で答え直し）: ${corrected} 回`);
   log(`  未知（報告）: ${unknownList.length} 問 ${unknownList.length ? JSON.stringify(unknownList) : ""}`);
   log(`  正答率: ${done.pct ?? "?"} / 次レッスンへ遷移: ${advanced ? "あり" : "なし"}`);
   if (unknownList.length) {
     log("  ※ 未知問題は drill-import.mjs で取り込んでから再実行すると次回は自動突破できます。");
   }
 
-  return { known, unknownList, done, advanced };
+  return { known, corrected, unknownList, done, advanced };
 }
 
 // 選択式（aria付き4択・○✕・aria無し4択の「選択肢から選んでください」型）を堅牢に回答する。

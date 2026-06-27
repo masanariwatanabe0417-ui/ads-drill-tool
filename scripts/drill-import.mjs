@@ -63,6 +63,9 @@ const MAX_QUESTIONS = parseInt(process.env.MAX_QUESTIONS ?? "60", 10);
 const AUTO_UNKNOWN = process.env.AUTO_UNKNOWN === "1";
 // 取り込み後の「復習クリア（②）」を行わず取り込みだけで止めたい場合は NO_REVIEW=1。
 const NO_REVIEW = process.env.NO_REVIEW === "1";
+// NO_IMPORT=1: 各問を解いて前進（＝誤答→復習を起動）するが /api/import-question へPOSTしない。
+// 既に取り込み済みのレッスンで「復習クリア＝自己訂正」だけを AI再課金なしで再検証する replay 用。
+const NO_IMPORT = process.env.NO_IMPORT === "1";
 
 const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
   headless: false,
@@ -244,6 +247,9 @@ async function importLesson({ series, course, lesson }) {
       else if (s.isOrdering) console.log(`  → [並べ替え] 判定: ${a.verdict} / 正解順は解説に含む`);
       else if (s.isCloze) console.log(`  → [穴埋め×${s.clozeBlanks}] 判定: ${a.verdict} / 正解シーケンスは解説から復習時に導出`);
       else console.log(`  → 正解: ${a.correctAnswer} / 判定: ${a.verdict}`);
+      if (NO_IMPORT) {
+        console.log(`  (NO_IMPORT: ${s.qnum} は保存スキップ＝復習トリガーのみ・AI再課金なし)`);
+      } else {
       try {
         const res = await fetch(API, {
           method: "POST",
@@ -271,6 +277,7 @@ async function importLesson({ series, course, lesson }) {
       } catch (e) {
         console.log(`  ✗ APIに接続できません（dev サーバは起動中？）: ${e.message}`);
       }
+      } // end NO_IMPORT
     }
     } // end ONLY フィルタ
 
