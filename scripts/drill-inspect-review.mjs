@@ -19,6 +19,7 @@
 import { chromium } from "playwright";
 import path from "path";
 import { fileURLToPath } from "url";
+import fs from "fs";
 import { readState, sleep } from "./drill-dom.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -98,6 +99,7 @@ const ts = () => ((Date.now() - t0) / 1000).toFixed(1);
 let prev = null;        // 直前スナップショット（遷移時の「直前のボタン状態」判定に使う）
 let prevKey = "";
 let prevQnum = null;
+let dumpN = 0;          // 非クイズ画面DOMダンプの連番
 
 for (let i = 0; i < 1800; i++) {
   const s = await snap();
@@ -110,6 +112,13 @@ for (let i = 0; i < 1800; i++) {
         // 結果/完了画面: ボタン一覧・スコアを記録
         console.log(`[t=${ts()}s] [非クイズ画面] score=${s.score ?? "-"} pct=${s.pct ?? "-"} 本文頭=「${s.bodyHead}」`);
         console.log(`            クリック可能ボタン=${JSON.stringify(s.btns)}`);
+        // ③設計用: 「次のレッスンへ」押下後の画面（案i 直接Q1 / 案ii 紹介画面+開始ボタン）を確定するため
+        // 非クイズ画面の遷移ごとにDOMを1枚ダンプして後から正確に読めるようにする。
+        try {
+          const f = path.join(__dirname, `drill-dump.transition-${String(++dumpN).padStart(2, "0")}.html`);
+          fs.writeFileSync(f, await page.content(), "utf-8");
+          console.log(`            (DOMダンプ: ${path.basename(f)})`);
+        } catch {}
       }
       prevKey = key;
     }
