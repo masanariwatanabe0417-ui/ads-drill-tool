@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: experiment-drill-autoimport / コミット: 3cfe10d / 状態: ✅ クリーン
-- 最終作業: feat: 実復習の「復習タイム！」オーバーレイをclearReviewで突破＝統合import+復習クリアをライブ実証
-- 次候補: ★最新(2026-06-27c) 実「間違えた問題だけの復習」フローを観察→真因特定→clearReviewに「復習タイ…（詳細・残り候補は NEXT_TASKS.md）
+- ブランチ: experiment-drill-autoimport / コミット: a878ff6 / 状態: ✅ クリーン
+- 最終作業: feat: 復習突破に「自己訂正リプレイ」追加＋NO_IMPORT replayで③をライブ実証
+- 次候補: ★最新(2026-06-27e) ③ライブ実証＋「自己訂正リプレイ」実装で復習突破を堅牢化（experiment-dri…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
