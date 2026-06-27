@@ -216,6 +216,28 @@ export async function clearReview(page, index, opts = {}) {
   const unknownList = [];
 
   for (let i = 0; i < maxQuestions; i++) {
+    // 「復習タイム！」オーバーレイ（＝誤答のみ復習の開始画面）を処理する。
+    // 実機観察（2026-06-27）: レッスン最終問に回答すると、誤答があれば「復習タイム！／間違えた
+    // 問題を おさらいしましょう／N問／3秒後に開始…／今すぐ始める」のオーバーレイが出る。このとき
+    // 背景に本編最終問が薄く残り quiz-answer-option が DOM に居るため、これを「回答可能な問題」と
+    // 誤認すると、裏で復習Q1へ自動開始してしまい1問ぶん噛み合わず脱線する（前回 Q11→Q2 の真因）。
+    // → オーバーレイを検出したら「今すぐ始める」で即開始（or 3秒自動開始を待つ）し、オーバーレイ
+    //   本文が消える＝復習Q1が前面化するまで待ってから次イテレーションで読む。
+    const onReviewIntro = await page
+      .evaluate(() => /復習タイム|間違えた問題を\s*おさらい|今すぐ始める/.test(document.body.innerText || ""))
+      .catch(() => false);
+    if (onReviewIntro) {
+      log("（復習タイム！オーバーレイ検出 → 復習を開始）");
+      const start = page.getByText("今すぐ始める", { exact: false });
+      if ((await start.count().catch(() => 0)) > 0) await start.first().click().catch(() => {});
+      // オーバーレイ本文が消える（復習Q1が前面化）まで待つ。押せなくても3秒で自動開始する。
+      await page
+        .waitForFunction(() => !/復習タイム|今すぐ始める/.test(document.body.innerText || ""), { timeout: 8000 })
+        .catch(() => {});
+      await sleep(1200);
+      continue;
+    }
+
     // 既に完了画面（復習なし＝全問正解 等）に居るなら復習ループは不要 → 完了処理へ。
     // （取り込み末尾から呼ばれた場合、誤答が無ければ復習は始まらずここに来る。）
     if (!(await page.$('[data-testid^="quiz-answer-option-"]'))) {
