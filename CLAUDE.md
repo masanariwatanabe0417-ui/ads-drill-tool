@@ -2,9 +2,9 @@
 
 ## ⚡ 現在の状態（handoff.sh が自動更新）
 <!-- STATE_START -->
-- ブランチ: experiment-drill-autoimport / コミット: e19ad7e / 状態: ✅ クリーン
-- 最終作業: chore: 旧ダンプ退避フォルダを.gitignoreに追加（handoff状態をクリーンに）
-- 次候補: ★最新(2026-06-26) ①マッチング(線結び)対応 完了＋Lesson3完全化(Q5 aria無し選択 是正含む…（詳細・残り候補は NEXT_TASKS.md）
+- ブランチ: experiment-drill-autoimport / コミット: 9fe0c54 / 状態: ✅ クリーン
+- 最終作業: feat: 復習の自動突破(②)＝保存済みstudyLog正解でレッスンを突破・AI再課金なし
+- 次候補: ★最新(2026-06-27) ②復習の自動突破＝レッスンを保存済みstudyLog正解で突破（AI再課金なし）＋完了画…（詳細・残り候補は NEXT_TASKS.md）
 <!-- STATE_END -->
 
 ## ⚠️ セッションのルール
