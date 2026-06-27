@@ -24,6 +24,7 @@ import path from "path";
 import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
+import { readState, sleep } from "./drill-dom.mjs";
 
 const __dirnameEarly = path.dirname(fileURLToPath(import.meta.url));
 const GO_FILE = path.join(__dirnameEarly, ".import-go");
@@ -68,8 +69,6 @@ console.log(" 3) そのまま放置（自動で最後の問題まで取り込み
 console.log(" 中断は Ctrl+C");
 console.log("==============================================\n");
 
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
 // 問題画面（解答ボタンが出ている状態）になるまで最大10分待つ＝ユーザーがログイン・移動する時間。
 // この待機中、ホーム画面に「学習中のシリーズ」が見えていればシリーズ名を先取りして覚えておく。
 // （クイズ画面に入るとシリーズ名がDOMから消えるため、ここで拾えないと空になる）
@@ -96,147 +95,7 @@ if (!(await page.$('[data-testid^="quiz-answer-option-"]'))) {
 }
 console.log(`問題画面を検出。取り込みを開始します。${capturedSeries ? `（シリーズ先取り: ${capturedSeries}）` : ""}\n`);
 
-// --- DOM から現在の問題＋（あれば）回答後フィードバックを読み取る ---
-async function readState() {
-  return page.evaluate(() => {
-    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
-
-    // 選択肢: aria-label = 表示ラベル、回答後は正解に「正解」が付与される
-    const optEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
-    const opts = optEls.map((el) => {
-      const aria = norm(el.getAttribute("aria-label"));
-      const text = norm(el.textContent);
-      return { aria, text };
-    });
-    const options = opts.map((o) => o.text || o.aria);
-    // 正解 = aria-label に「正解」が付与され、かつ「不正解」ではない選択肢。
-    //   正答時:  aria「間違い、正解」     / text「間違い」     → これが正解
-    //   誤答時:  選んだ側 aria「正しい、不正解」/ 正解側 aria「間違い、正解」
-    // 注意: 「不正解」は文字列「正解」を含むため、単純な includes("正解") だと
-    //       誤答時に自分が選んだ不正解の選択肢を正解と誤判定する（要除外）。
-    let correctAnswer = null;
-    for (const o of opts) {
-      if (o.aria && o.aria.includes("正解") && !o.aria.includes("不正解") && o.aria !== o.text) {
-        correctAnswer = o.text || o.aria.replace(/[、,]?\s*正解.*$/, "");
-        break;
-      }
-    }
-    // 注意: aria-label が無い選択問題（例「選択肢から選んでください」）は、正解を
-    // DOM から確実には読めない。回答後に付く r-lrvibr マーカーは「正解」ではなく
-    // 「自分が選んだ選択肢」を示す（誤答時はその誤答に付く）ため正解読みには使えない。
-    // よってこの種の問題では correctAnswer は null のままにし、正解はドリル公式解説
-    // （drillExplanation）に委ねる（サーバ側で「正解は解説参照」の回答ブロックになる）。
-
-    // 指示文（「選択肢から選んでください」「正しい順番に並べてね」「タップして接続」など）を拾う。
-    // 形式判定（並べ替え/マッチング/選択式）に使う。
-    let instruction = "";
-    for (const el of document.querySelectorAll('div[dir="auto"]')) {
-      if (el.querySelector('div[dir="auto"]')) continue;
-      const t = norm(el.textContent);
-      if (/選んでください|選択肢から選|正しい順番に並べ|並べてね|タップして接続|正しいか間違いか/.test(t) && t.length <= 30) {
-        instruction = t;
-        break;
-      }
-    }
-
-    // マッチング（線結び）判定: 画面に「ペア完成」マーカーがある（マッチング画面のみに出る）。
-    const isMatching = /ペア完成/.test(document.body.innerText || "");
-
-    // マッチングの右項目: 全選択肢を含む最小の共通祖先（問題コンテナ）内の、
-    // tabindex を持つが data-testid が無いタップ可能 div。左項目テキストは除外。
-    // （SPA がホーム画面を DOM に残すため、document 全体から拾うとカードが混入する＝コンテナ限定が必須。）
-    let rightItems = [];
-    if (isMatching && optEls.length >= 2) {
-      let container = optEls[0];
-      while (container && !optEls.every((o) => container.contains(o))) container = container.parentElement;
-      if (container) {
-        const leftSet = new Set(options);
-        for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
-          const t = norm(el.textContent);
-          if (!t || t.length > 40) continue;
-          if (leftSet.has(t)) continue;
-          if (rightItems.includes(t)) continue;
-          rightItems.push(t);
-        }
-      }
-    }
-
-    // 並べ替え問題の判定: 選択肢に aria-label が無い（通常の選択式は aria=ラベルが付く）。
-    // ただしマッチングは別扱い、また「選んでください」系の指示は単一選択（aria無しでも選択式）。
-    // 回答前のこの状態でしか選択肢が読めない（回答後は選択肢が消える）。
-    const isSelectPrompt = /選んでください|選択肢から選/.test(instruction);
-    const isOrdering =
-      !isMatching && optEls.length >= 2 && opts.every((o) => !o.aria) && !isSelectPrompt;
-
-    // Q番号・総数
-    let qnum = null, total = null;
-    for (const el of document.querySelectorAll("div")) {
-      const t = norm(el.textContent);
-      if (!qnum && /^Q\d+$/.test(t)) qnum = t;
-      const m = t.match(/^\/\s*(\d+)\s*問$/);
-      if (m) total = parseInt(m[1], 10);
-      if (qnum && total) break;
-    }
-
-    // 問題文: 設問エリアの最長テキスト（選択肢・指示文・ナビ等を除外）
-    const optionTexts = new Set(options);
-    let questionText = "";
-    for (const el of document.querySelectorAll('div[dir="auto"]')) {
-      // 子に dir=auto を含む（=コンテナ）は除外し、葉テキストだけ見る
-      if (el.querySelector('div[dir="auto"]')) continue;
-      const t = norm(el.textContent);
-      if (t.length < 12) continue;
-      if (optionTexts.has(t)) continue;
-      if (/選んでください|正しいか間違いか/.test(t)) continue;
-      if (/タップして|並べてね|^正しい順番に並べて/.test(t)) continue; // 並べ替えの指示文
-      if (/^Lesson\s*\d+/i.test(t)) continue;
-      if (t.length > questionText.length) questionText = t;
-    }
-
-    // 回答後フィードバック
-    const fbEl = document.querySelector('[data-testid="quiz-feedback"]');
-    let answered = false, verdict = null, explanation = "";
-    if (fbEl) {
-      answered = true;
-      const leaves = [...fbEl.querySelectorAll('div[dir="auto"]')].filter(
-        (el) => !el.querySelector('div[dir="auto"]')
-      );
-      const paras = [];
-      for (const el of leaves) {
-        const t = norm(el.textContent);
-        if (!t) continue;
-        if (/^(正解|不正解|正解！|残念)/.test(t) && t.length <= 6) { verdict = t; continue; }
-        if (t === "マスターのワンポイント") continue;
-        paras.push(t);
-      }
-      explanation = paras.join("\n\n");
-      if (!verdict) verdict = /不正解|残念/.test(norm(fbEl.textContent).slice(0, 12)) ? "不正解" : "正解";
-    }
-
-    // ヘッダ: 進捗バー直前の2テキスト＝[コンテキストラベル, タイトル]
-    let contextLabel = "", title = "";
-    {
-      const texts = [...document.querySelectorAll('div[dir="auto"]')]
-        .filter((el) => !el.querySelector('div[dir="auto"]'))
-        .map((el) => norm(el.textContent));
-      const qIdx = texts.findIndex((t) => /^Q\d+$/.test(t));
-      if (qIdx > 1) {
-        const before = texts.slice(0, qIdx).filter((t) => t && t.length <= 30);
-        title = before[before.length - 1] || "";
-        contextLabel = before[before.length - 2] || "";
-      }
-    }
-    // シリーズ名: 「学習中のシリーズ」の直後テキスト
-    let series = "";
-    {
-      const texts = [...document.querySelectorAll('div[dir="auto"]')].map((el) => norm(el.textContent));
-      const i = texts.findIndex((t) => t === "学習中のシリーズ");
-      if (i !== -1 && texts[i + 1]) series = texts[i + 1];
-    }
-
-    return { options, correctAnswer, isOrdering, isMatching, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
-  });
-}
+// （readState は scripts/drill-dom.mjs に移設・共有。挙動は不変。）
 
 // タイトルから「Lesson N <タイトル>」形式を復元（ナビ一覧に番号があれば付与）
 async function resolveLessonName(title) {
@@ -257,7 +116,7 @@ async function resolveLessonName(title) {
 }
 
 // 階層を1回だけ確定（環境変数で上書き可）
-const first = await readState();
+const first = await readState(page);
 const series = process.env.SERIES || first.series || capturedSeries || "不明シリーズ";
 const course = process.env.COURSE || first.contextLabel || "不明コース";
 const lesson = process.env.LESSON || (await resolveLessonName(first.title)) || first.title || "不明レッスン";
@@ -286,7 +145,7 @@ const onlyTargets = process.env.ONLY
 for (let i = 0; i < MAX_QUESTIONS; i++) {
   // 解答ボタンが出るまで待つ（次問の読み込み待ち）
   await page.waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 }).catch(() => {});
-  const s = await readState();
+  const s = await readState(page);
   if (!s.qnum) { console.log("Q番号を取得できませんでした。終了します。"); break; }
   if (seen.has(s.qnum)) { console.log(`${s.qnum} は処理済み。進まなくなったため終了します。`); break; }
   seen.add(s.qnum);
@@ -348,7 +207,7 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
     }
   }
   await page.waitForSelector('[data-testid="quiz-feedback"]', { timeout: 15000 }).catch(() => {});
-  const a = await readState();
+  const a = await readState(page);
 
   // ONLY フィルタ: 対象外の問は保存せず巡回のみ（解答済みなので次へ進むだけ）。
   if (onlyTargets && !onlyTargets.has(s.qnum)) {
