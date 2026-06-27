@@ -30,11 +30,16 @@ export async function readState(page) {
         break;
       }
     }
-    // 注意: aria-label が無い選択問題（例「選択肢から選んでください」）は、正解を
-    // DOM から確実には読めない。回答後に付く r-lrvibr マーカーは「正解」ではなく
-    // 「自分が選んだ選択肢」を示す（誤答時はその誤答に付く）ため正解読みには使えない。
-    // よってこの種の問題では correctAnswer は null のままにし、正解はドリル公式解説
-    // （drillExplanation）に委ねる（サーバ側で「正解は解説参照」の回答ブロックになる）。
+    // aria-label が無い選択問題（例「選択肢から選んでください」型）は aria から正解を読めない。
+    // ただし回答後はドリルが枠色で正誤を示す＝正解は緑枠 rgb(22,163,74) / 誤答選択は赤枠
+    // rgb(239,68,68)（実DOMで確認済み・dump: choice-debug-Q6）。回答前は両色とも付かないため
+    // null のまま＝回答後の readState でのみ拾える（import は feedback 後に readState する）。
+    if (!correctAnswer) {
+      for (let i = 0; i < optEls.length; i++) {
+        const bc = (getComputedStyle(optEls[i]).borderColor || "").replace(/\s+/g, "");
+        if (/22,163,74/.test(bc)) { correctAnswer = opts[i].text || norm(optEls[i].textContent); break; }
+      }
+    }
 
     // 指示文（「選択肢から選んでください」「正しい順番に並べてね」「タップして接続」など）を拾う。
     // 形式判定（並べ替え/マッチング/選択式）に使う。
@@ -76,6 +81,13 @@ export async function readState(page) {
     const isSelectPrompt = /選んでください|選択肢から選/.test(instruction);
     const isOrdering =
       !isMatching && optEls.length >= 2 && opts.every((o) => !o.aria) && !isSelectPrompt;
+
+    // cloze（複数空欄の穴埋め）: 「選択肢から選んでください」型 かつ 本文に空欄（全角＿の連続）がある。
+    // 回答前は空欄が ＿＿＿ で表示され、選択肢語を“空欄の順に”タップして埋める→全部埋まると「回答する」
+    // が出る（並べ替えに近い／単一選択ではない。実機観察済み）。空欄数＝タップする語数。
+    const clozeBlanks = ((document.body.innerText || "").match(/[＿_]{2,}/g) || []).length;
+    const isCloze =
+      isSelectPrompt && optEls.length >= 2 && opts.every((o) => !o.aria) && clozeBlanks >= 1;
 
     // Q番号・総数
     let qnum = null, total = null;
@@ -143,6 +155,6 @@ export async function readState(page) {
       if (i !== -1 && texts[i + 1]) series = texts[i + 1];
     }
 
-    return { options, correctAnswer, isOrdering, isMatching, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
+    return { options, correctAnswer, isOrdering, isMatching, isCloze, clozeBlanks, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
   });
 }

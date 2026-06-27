@@ -25,6 +25,7 @@ import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
 import { readState, sleep } from "./drill-dom.mjs";
+import { fetchIndex, clearReview, answerChoice, answerCloze } from "./drill-review-core.mjs";
 
 const __dirnameEarly = path.dirname(fileURLToPath(import.meta.url));
 const GO_FILE = path.join(__dirnameEarly, ".import-go");
@@ -52,7 +53,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PROFILE_DIR = path.join(__dirname, ".pw-profile");
 const START_URL = "https://drill.ma-ji.ai/";
 const API = process.env.IMPORT_API ?? "http://localhost:3000/api/import-question";
+const STUDYLOG_API = process.env.REVIEW_API ?? "http://localhost:3000/api/study-log";
 const MAX_QUESTIONS = parseInt(process.env.MAX_QUESTIONS ?? "60", 10);
+const AUTO_UNKNOWN = process.env.AUTO_UNKNOWN === "1";
+// 取り込み後の「復習クリア（②）」を行わず取り込みだけで止めたい場合は NO_REVIEW=1。
+const NO_REVIEW = process.env.NO_REVIEW === "1";
 
 const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
   headless: false,
@@ -150,8 +155,8 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   if (seen.has(s.qnum)) { console.log(`${s.qnum} は処理済み。進まなくなったため終了します。`); break; }
   seen.add(s.qnum);
 
-  const kind = s.isMatching ? "matching" : s.isOrdering ? "ordering" : "choice";
-  const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : "";
+  const kind = s.isMatching ? "matching" : s.isOrdering ? "ordering" : s.isCloze ? "cloze" : "choice";
+  const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? `[穴埋め×${s.clozeBlanks}]` : "";
   console.log(
     `[${s.qnum}]${kindLabel} ${s.questionText.slice(0, 40)}…  左=${JSON.stringify(s.options)}` +
       (s.isMatching ? ` 右=${JSON.stringify(s.rightItems)}` : "")
@@ -199,11 +204,15 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
       await sleep(500);
       await page.click('[data-testid="quiz-submit"]', { timeout: 3000 }).catch(() => {});
       await page.getByText("回答する", { exact: true }).first().click({ timeout: 3000 }).catch(() => {});
+    } else if (s.isCloze) {
+      // cloze（複数空欄）: 空欄を blankCount 個ぶん埋めて確定（取り込みは前進＋公式解説取得が目的。
+      // 正解シーケンスは保存解説から復習時に導く）。空欄順に先頭の選択肢を置く best effort。
+      await answerCloze(page, [], s.clozeBlanks || s.options.length);
     } else {
-      // 選択式: 選択肢0をクリック → 「回答する」確定
-      await page.click('[data-testid="quiz-answer-option-0"]').catch(() => {});
-      await page.waitForSelector('[data-testid="quiz-submit"]', { timeout: 8000 }).catch(() => {});
-      await page.click('[data-testid="quiz-submit"]').catch(() => {});
+      // 選択式: aria付き（○✕・通常4択）と aria無し（「選択肢から選んでください」型）の両対応。
+      // 取り込みは常に先頭(index:0)を選んで回答（誤答でも公式解説＋枠色から正解を取得できる）。
+      // 既選択の再タップで選択解除されるトグルを避ける堅牢版（answerChoice）に委譲。
+      await answerChoice(page, { index: 0 });
     }
   }
   await page.waitForSelector('[data-testid="quiz-feedback"]', { timeout: 15000 }).catch(() => {});
@@ -213,22 +222,27 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   if (onlyTargets && !onlyTargets.has(s.qnum)) {
     console.log(`  (ONLY フィルタ: ${s.qnum} は保存スキップ)`);
   } else {
-  // 並べ替え・マッチングは正解が単一ラベルでなく解説に正しい対応/順序が含まれる→解説が取れればOK
-  const captured = s.isOrdering || s.isMatching ? !!a.explanation : !!a.correctAnswer;
+  // 並べ替え・マッチング・cloze は正解が単一ラベルでなく解説に正しい順序/対応/穴埋め語が含まれる
+  // →解説が取れればOK。通常選択式は correctAnswer（aria か回答後の緑枠）が取れればOK。
+  const captured = s.isOrdering || s.isMatching || s.isCloze ? !!a.explanation : !!a.correctAnswer;
   if (!captured) {
-    console.log(`  ⚠ ${s.isOrdering || s.isMatching ? "解説" : "正解"}を取得できませんでした（${s.qnum}）。この問はスキップします。`);
-    // 取得失敗時は、回答確定後（または確定UI待ち）のDOMをデバッグ保存して原因を追えるようにする
-    if (s.isOrdering || s.isMatching) {
-      try {
-        const tag = s.isMatching ? "matching" : "ordering";
-        const dbg = path.join(__dirnameEarly, `drill-dump.${tag}-debug-${s.qnum}.html`);
-        fs.writeFileSync(dbg, await page.content(), "utf-8");
-        console.log(`    (デバッグ: ${dbg} を保存)`);
-      } catch {}
+    console.log(`  ⚠ ${s.isOrdering || s.isMatching || s.isCloze ? "解説" : "正解"}を取得できませんでした（${s.qnum}）。この問はスキップします。`);
+    // 取得失敗時は、回答確定後（または確定UI待ち）のDOMをデバッグ保存して原因を追えるようにする。
+    // 選択式で正解が読めない＝aria-label の無い「選択肢から選んでください」型。フィードバックDOMと
+    // 取得済み解説（公式解説に正解が書かれていれば後で抽出できる）も残して原因を追う。
+    const tag = s.isMatching ? "matching" : s.isOrdering ? "ordering" : "choice";
+    try {
+      const dbg = path.join(__dirnameEarly, `drill-dump.${tag}-debug-${s.qnum}.html`);
+      fs.writeFileSync(dbg, await page.content(), "utf-8");
+      console.log(`    (デバッグ: ${dbg} を保存)`);
+    } catch {}
+    if (tag === "choice") {
+      console.log(`    (取得済み解説の冒頭: ${(a.explanation || "(空)").replace(/\s+/g, " ").slice(0, 160)}…)`);
     }
   } else {
     if (s.isMatching) console.log(`  → [線結び] 判定: ${a.verdict} / 正しい対応は解説に含む`);
     else if (s.isOrdering) console.log(`  → [並べ替え] 判定: ${a.verdict} / 正解順は解説に含む`);
+    else if (s.isCloze) console.log(`  → [穴埋め×${s.clozeBlanks}] 判定: ${a.verdict} / 正解シーケンスは解説から復習時に導出`);
     else console.log(`  → 正解: ${a.correctAnswer} / 判定: ${a.verdict}`);
     try {
       const res = await fetch(API, {
@@ -241,7 +255,9 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
           questionText: s.questionText,
           options: s.options,
           rightItems: s.isMatching ? s.rightItems : undefined,
-          correctAnswer: a.correctAnswer ?? undefined,
+          // cloze は単一正解でない（緑枠は1空欄ぶんしか示さず誤誘導）→ correctAnswer は送らない。
+          // 正解シーケンスは公式解説（drillExplanation）から復習時に導く。
+          correctAnswer: s.isCloze ? undefined : (a.correctAnswer ?? undefined),
           drillExplanation: a.explanation,
         }),
       });
@@ -258,17 +274,63 @@ for (let i = 0; i < MAX_QUESTIONS; i++) {
   }
   } // end ONLY フィルタ
 
-  // 最終問題か判定: 「次の問題へ」が無ければ終了
-  const next = page.getByText("次の問題へ", { exact: true });
-  if ((await next.count()) === 0) {
-    console.log("「次の問題へ」が見つかりません。レッスン終了とみなします。");
-    break;
+  // 次へ進む。判定は「次の問題へ」ボタンの有無だけに頼らない（問題種別により遷移ラベルが
+  // 変わる＝例: aria無しの選択式では「次の問題へ」でなく「次へ」のことがある。これで以前は
+  // 最終問と誤判定し途中で打ち切っていた）。Q番号と総数で最終問を判定し、ラベルは広めに探す。
+  const qn = parseInt((s.qnum || "").replace(/\D/g, ""), 10);
+  const isLast = !!s.total && !!qn && qn >= s.total;
+  if (!isLast) {
+    // 中間問: 次の問題へ進むボタンを広めに探して押す（結果/終了系は押さない）。
+    const nextLabels = ["次の問題へ", "次へ"];
+    let advanced = false;
+    for (const lab of nextLabels) {
+      const loc = page.getByText(lab, { exact: true });
+      if ((await loc.count().catch(() => 0)) > 0) {
+        await loc.first().click().catch(() => {});
+        if (lab !== "次の問題へ") console.log(`  （遷移: 「${lab}」）`);
+        advanced = true;
+        break;
+      }
+    }
+    if (!advanced) {
+      console.log(`  ⚠ 次へ進むボタンが見つかりません（${s.qnum}/${s.total}）。レッスン終了とみなします。`);
+      try { fs.writeFileSync(path.join(__dirnameEarly, `drill-dump.no-next-${s.qnum}.html`), await page.content(), "utf-8"); } catch {}
+      break;
+    }
+    await sleep(1200);
+    continue;
   }
-  await next.first().click().catch(() => {});
-  await sleep(1200);
+  // 最終問 → 結果（→誤答があれば復習）へ。終了系ラベルを広めに探して押す。
+  console.log(`最終問（${s.qnum}/${s.total}）。結果（→誤答があれば復習）へ進みます。`);
+  const finalLabels = ["結果を見る", "結果へ", "スコアを見る", "次へ", "終了する", "終了", "完了する", "レッスンを終える"];
+  for (const lab of finalLabels) {
+    const loc = page.getByText(lab, { exact: true });
+    if ((await loc.count().catch(() => 0)) > 0) { await loc.first().click().catch(() => {}); console.log(`  （最終遷移: 「${lab}」をクリック）`); break; }
+  }
+  break;
 }
 
-console.log(`\n完了。${imported} 問を取り込みました。`);
-console.log("アプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
+console.log(`\n取り込み完了。${imported} 問を保存しました。`);
+
+// === 復習クリア（②）===
+// 取り込みで選択式を option-0（多くは誤答）で答えるため、最終問の後に「間違えた問題だけの
+// 復習」が同一ブラウザ・同一セッションで連続して始まる。直前に保存したばかりの studyLog を
+// 取り込み直し、保存済み正解で復習を突破する（/api/import-question へPOSTしない＝AI再課金なし）。
+// 誤答が無く復習が始まらない場合は、clearReview が完了画面を検出して「次のレッスンへ」を押す。
+if (NO_REVIEW) {
+  console.log("（NO_REVIEW=1: 復習クリアはスキップします）");
+} else {
+  await sleep(1500);
+  console.log("\n=== 復習クリア（②）＝保存済み正解で突破（AI再課金なし）===");
+  const index = await fetchIndex(STUDYLOG_API);
+  await clearReview(page, index, {
+    auto: AUTO_UNKNOWN,
+    maxQuestions: MAX_QUESTIONS,
+    waitForGo, // 未知問題で停止する際の再開待ち（.import-go / Enter）
+    dumpDir: __dirnameEarly,
+  });
+}
+
+console.log("\nアプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
 await ctx.close().catch(() => {});
 process.exit(0);
