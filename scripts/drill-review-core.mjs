@@ -142,6 +142,28 @@ export function optionMatchesCorrect(option, correct) {
   return o.endsWith(c) && o.length - c.length <= 2;
 }
 
+// 復習の問題シグネチャ（自己訂正リプレイ／重複判定のキー）。
+// 問題文だけだと、フィナーレ・レッスンの固定バナー（例「Webの地図を完成させよう（The Finale）」）が
+// readState の「最長葉テキスト」ヒューリスティックで questionText に化け、別問題どうしが同じ問題文に
+// なって衝突する（実ライブで ○✕ と 4択 が同一sig になり、○✕の訂正「間違い」が4択へ誤適用された）。
+// → 選択肢集合（並び順非依存にソート）もキーに含めて厳密化する。問題文・選択肢ともに空なら "" を返す
+//   （呼び出し側が qnum へフォールバック）。
+export function questionSig(questionText, options = []) {
+  const qkey = normKey(questionText);
+  const optSig = (options || []).map((o) => normKey(o)).filter(Boolean).sort().join("¦");
+  return qkey || optSig ? `${qkey}¦${optSig}` : "";
+}
+
+// 学習済み正解（corrections の値）が、いま表示中の選択肢に実在するか。
+// 別問題の訂正（sig 衝突の取りこぼし等）を現在の設問へ force-apply しないためのガード。
+// seq（cloze）は全語が、text（選択式）は1語が選択肢に一致して初めて「適用可」とする。
+export function correctionApplies(corr, options = []) {
+  if (!corr) return false;
+  const cands = corr.seq?.length ? corr.seq : corr.text ? [corr.text] : [];
+  if (!cands.length) return false;
+  return cands.every((c) => (options || []).some((o) => optionMatchesCorrect(o, c)));
+}
+
 // studyLog 全体 → 既知問題インデックス（正規化した問題文 → {correctText, info, lesson}）。
 export function buildIndex(studyLog) {
   const index = new Map();
@@ -206,12 +228,16 @@ export async function readCorrectFromFeedback(page, s) {
     .evaluate(() => {
       const strip = (x) => (x || "").replace(/[-]/g, "");
       const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
-      const isGreen = (e) => {
+      // 正解マーカーの緑 rgb(22,163,74)。border/bg だけでなく文字色/外枠色や、選択肢の
+      // 子孫要素（緑チェックのアイコン枠など）に付くケースもあるため広めに見る（4択でも確実に拾う）。
+      const hasGreen = (e) => {
         const c = getComputedStyle(e);
-        return /22,\s*163,\s*74/.test(c.borderColor) || /22,\s*163,\s*74/.test(c.backgroundColor);
+        const g = (v) => /\b22,\s*163,\s*74\b/.test(v || "");
+        return g(c.borderColor) || g(c.backgroundColor) || g(c.color) || g(c.outlineColor);
       };
+      const optHasGreen = (opt) => hasGreen(opt) || [...opt.querySelectorAll("*")].some(hasGreen);
       return [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')]
-        .filter(isGreen)
+        .filter(optHasGreen)
         .map((e) => strip(norm(e.textContent)))
         .filter(Boolean);
     })
@@ -281,9 +307,10 @@ export async function clearReview(page, index, opts = {}) {
     }
     await page.waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 }).catch(() => {});
     const s = await readState(page);
-    // 重複判定は Q番号でなく問題文で行う（復習画面は Q番号がスクランブル＝SPA残骸で誤読されるため、
-    // qnum 基準だと別問を「処理済み」と誤判定して早期終了する。実ライブで確認）。
-    const sig = normKey(s.questionText) || s.qnum || "";
+    // 重複判定は Q番号でなく問題文＋選択肢で行う（復習画面は Q番号がスクランブル＝SPA残骸で誤読される
+    // ため qnum 基準は不可）。さらに問題文だけだとフィナーレのバナーが questionText に化けて別問題が
+    // 衝突するため、選択肢集合も含めて厳密化する（questionSig）。両方空なら qnum へフォールバック。
+    const sig = questionSig(s.questionText, s.options) || s.qnum || "";
     if (!sig) { log("問題を取得できませんでした。終了します。"); break; }
     // 自己訂正のため「再提示＝即終了」はしない。正解を学習できず周回する場合のみ試行回数で打ち切る。
     if ((attempts.get(sig) || 0) >= MAX_ATTEMPTS) {
@@ -295,7 +322,14 @@ export async function clearReview(page, index, opts = {}) {
     const hit = lookup(index, s.questionText);
     const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? "[穴埋め]" : "[選択]";
 
-    const corr = corrections.get(sig);
+    let corr = corrections.get(sig);
+    // 取り違えガード: 学習済み正解が現在の選択肢に実在しなければ別問題のもの → 破棄して通常経路へ。
+    // （sig 厳密化で衝突はほぼ消えるが、万一の取りこぼしでも誤った正解を force-apply してスタックしない）。
+    if (corr && !s.isMatching && !s.isOrdering && !correctionApplies(corr, s.options)) {
+      log(`     （学習済み正解「${corr.text ?? (corr.seq || []).join("/")}」は現在の選択肢に無い→別問題と判断し破棄）`);
+      corrections.delete(sig);
+      corr = null;
+    }
     if (!s.answered && corr) {
       // --- 自己訂正: 前回の不正解後にフィードバックから読んだ正解で答え直す（全タイプ共通の最終手段）---
       corrected += 1;
