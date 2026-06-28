@@ -120,8 +120,12 @@ export async function readState(page) {
       const t = norm(el.textContent);
       if (t.length < 12) continue;
       if (optionTexts.has(t)) continue;
-      if (/選んでください|正しいか間違いか/.test(t)) continue;
-      if (/タップして|並べてね|^正しい順番に並べて/.test(t)) continue; // 並べ替えの指示文
+      // ⚠ 指示文除外は「短い汎用指示」だけに限定する（≤30字。instruction 取得[L50]と同じ閾値）。
+      //   長さ無制限で除外すると、末尾が「…選んでください。」の本物の問題文（例 線結び
+      //   「HTMLのタグは…それぞれのタグが示す意味を選んでください。」47字）まで丸ごと消え、
+      //   questionText 空→保存API 400（必須項目欠落）→未保存→復習で「未知」化して停止する事故になる。
+      if (t.length <= 30 && /選んでください|正しいか間違いか/.test(t)) continue;
+      if (t.length <= 30 && /タップして|並べてね|^正しい順番に並べて/.test(t)) continue; // 並べ替え等の指示文
       if (/^Lesson\s*\d+/i.test(t)) continue;
       if (t.length > questionText.length) questionText = t;
     }

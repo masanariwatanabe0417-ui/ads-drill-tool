@@ -610,35 +610,51 @@ export async function answerMatching(page, s, pairs = []) {
       const ri = findLoose(s.rightItems, p.right);
       if (li !== -1 && ri !== -1) plan.push([li, s.rightItems[ri]]);
     }
-    // 全ペアを対応づけられなければ機械接続に退避（部分的な取りこぼし防止）。
-    if (plan.length !== Math.min(s.options.length, s.rightItems.length)) {
-      console.log(`     ⚠ 対応づけ ${plan.length}/${Math.min(s.options.length, s.rightItems.length)} のみ → 機械接続に退避`);
+    // ⚠ 線結びは「左の全項目」を接続する必要がある（右が少ない多対1＝3左→2右等でも左は全部繋ぐ）。
+    //   旧コードは閾値を min(左,右) にしていたため、3左→2右で plan=3 が「3/2のみ」と誤判定され、
+    //   正しい対応を捨てて機械接続（不正解）へ退避→復習を突破できず停止していた
+    //   （HTML構造マスター Lesson3 Q7 「body直下の要素間の関係（兄弟/親子）」で実証）。
+    if (plan.length !== s.options.length) {
+      console.log(`     ⚠ 対応づけ ${plan.length}/${s.options.length} のみ → 機械接続に退避`);
       plan = null;
     }
   }
   if (!plan) {
-    const n = Math.min(s.options.length, s.rightItems.length);
-    plan = Array.from({ length: n }, (_, i) => [i, s.rightItems[i]]);
+    // 機械接続（対応不明時の最終手段）: 左の全項目を接続。右が少ない多対1では右をサイクル割当て。
+    const rc = Math.max(1, s.rightItems.length);
+    plan = Array.from({ length: s.options.length }, (_, i) => [i, s.rightItems[i % rc]]);
   }
 
+  // 右スロットは「ラベル重複あり・実体は1対1」のことがある（例 右=[親子, 兄弟, 兄弟] の3スロット）。
+  // ⚠ 単純なテキスト一致だと同名スロットの先頭ばかり再タップし、2つ目の同名右に接続できず
+  //   N/N に届かず確定が出ない→復習を突破できず停止する（HTML構造マスター Lesson3 で 2/3 で停止を実証）。
+  //   そこで「同じラベルの未使用スロットを DOM 出現順に1つずつ消費」して接続する。
+  const usedRight = [];
   for (const [li, rightLabel] of plan) {
     await page.click(`[data-testid="quiz-answer-option-${li}"]`, { timeout: 5000 }).catch(() => {});
     await sleep(500);
-    // 右項目は data-testid 無し → 問題コンテナ内をテキスト一致で特定し一時タグ付け→クリック。
-    await page.evaluate(
-      ({ label }) => {
+    const picked = await page.evaluate(
+      ({ label, used }) => {
         const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
         const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
+        const leftTexts = new Set(leftEls.map((e) => norm(e.textContent)));
         let container = leftEls[0] || document.body;
         while (container && !leftEls.every((o) => container.contains(o))) container = container.parentElement;
         container = container || document.body;
+        const SKIP = new Set(["リセット", "確定", "回答する", "次の問題へ", "次へ"]);
         document.querySelectorAll("[data-import-ri]").forEach((el) => el.removeAttribute("data-import-ri"));
+        let pos = 0, pickedPos = -1;
         for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
-          if (norm(el.textContent) === label) { el.setAttribute("data-import-ri", "1"); break; }
+          const t = norm(el.textContent);
+          if (!t || t.length > 40 || leftTexts.has(t) || SKIP.has(t)) continue;
+          const cur = pos++;
+          if (t === label && !used.includes(cur)) { el.setAttribute("data-import-ri", "1"); pickedPos = cur; break; }
         }
+        return pickedPos;
       },
-      { label: rightLabel }
+      { label: rightLabel, used: usedRight }
     );
+    if (picked >= 0) usedRight.push(picked);
     await page.click('[data-import-ri="1"]', { timeout: 5000 }).catch(() => {});
     await sleep(500);
   }
