@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, extractOrderFromFeedbackText, bestOverlapIndex } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -167,6 +167,46 @@ const enumOpts = ["content", "margin", "border", "padding"];
 t("構造的な列挙引用に引きずられず本文順（padding先頭）を返す", () => {
   // bc=1: 引用は4語>1 → 捨てて本文「paddingが正解です」順 → [padding]（列挙の content ではない）。
   assert.deepEqual(extractClozeSequence(clozeEnumExpl, enumOpts, 1), ["padding"]);
+});
+
+// === 並べ替え自己訂正（フィードバックの「A→B→C の順です」を読み、略語→フル選択肢に対応づける）===
+// 実ライブ(2026-06-28m データベース連携 L7 Q7)の review-wrong-Q7.html フィードバック実テキストで検証。
+console.log("\n並べ替え: フィードバックの正解順を読み、略語をフル選択肢にマッピングして自己訂正");
+
+// ドリルが不正解後に出す実フィードバック（マスターのワンポイント … の順です）。
+const orderingFeedback =
+  "1 モデルのスキーマを変更する 2 マイグレーションコマンドを実行する 3 変更内容のSQLが自動で作られる " +
+  "4 DBのテーブルに列が追加される 不正解... マスターのワンポイント スキーマ変更→コマンド実行→SQL生成→DB反映 の順です。 " +
+  "リフォーム計画書（マイグレーションファイル）が自動生成されるので、既存データを壊さずに構造を変更できます。";
+
+t("フィードバックから正解順（略語列）を抽出", () => {
+  assert.deepEqual(extractOrderFromFeedbackText(orderingFeedback), [
+    "スキーマ変更", "コマンド実行", "SQL生成", "DB反映",
+  ]);
+});
+t("前置きが無い/矢印が無い場合は空（誤学習しない）", () => {
+  assert.deepEqual(extractOrderFromFeedbackText("不正解...もう一度挑戦しましょう"), []);
+  assert.deepEqual(extractOrderFromFeedbackText(""), []);
+});
+
+// 実際の並べ替え選択肢（フル文）。略語ヒントをこれらに対応づけられれば正しい順でタップできる。
+const orderingOptions = [
+  "モデルのスキーマを変更する",
+  "マイグレーションコマンドを実行する",
+  "変更内容のSQLが自動で作られる",
+  "DBのテーブルに列が追加される",
+];
+t("略語『コマンド実行』→『マイグレーションコマンドを実行する』（findLooseでは取れない）", () => {
+  assert.equal(findLoose(orderingOptions, "コマンド実行"), -1); // 包含一致では取れないことを明示
+  assert.equal(bestOverlapIndex(orderingOptions, "コマンド実行"), 1);
+});
+t("4略語すべてが正しいフル選択肢に1対1で対応づく（=正解順でタップできる）", () => {
+  const seq = ["スキーマ変更", "コマンド実行", "SQL生成", "DB反映"];
+  const mapped = seq.map((lab) => bestOverlapIndex(orderingOptions, lab));
+  assert.deepEqual(mapped, [0, 1, 2, 3]);
+});
+t("どの選択肢とも語が重ならない略語は -1（誤タップ防止）", () => {
+  assert.equal(bestOverlapIndex(orderingOptions, "全く無関係なラベル"), -1);
 });
 
 console.log(`\n✅ 全 ${pass} 件パス`);

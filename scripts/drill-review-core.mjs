@@ -114,6 +114,45 @@ export function findLoose(cands, target) {
   return uniqueInclude(np, tp); // 完全一致が無ければ一意な包含のみ採用
 }
 
+// 並べ替えで不正解になった直後、ドリルのフィードバックに出る「○○→△△→□□ の順です」から正解順
+// （略語ラベル列）を取り出す。先頭の「マスターのワンポイント」等の前置きは捨てる。2項目未満は信頼せず[]。
+export function extractOrderFromFeedbackText(text) {
+  if (!text) return [];
+  const norm = (text || "").replace(/\s+/g, " ");
+  const m = norm.match(/([^。]*?)\s*の順(?:です|に|で|番)/);
+  if (!m) return [];
+  // 「ワンポイント」「正しくは」等のラベルがあればその後ろだけを順序列とみなす。
+  let seg = m[1].split(/ワンポイント|正しくは|正解は|正しい順序|順番は|順序は/).pop();
+  const parts = seg
+    .split(/\s*(?:→|⇒|⇨|->|＞|>|、|，|・)\s*/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  return parts.length >= 2 ? parts : [];
+}
+
+// 略語ラベル target を候補 cands の中で「トークン（漢字/かな/英数の連なり）の一致数」が最大の1つに
+// 対応づけて index を返す。並べ替えの正解ヒントが略語（「コマンド実行」）で選択肢がフル文
+// （「マイグレーションコマンドを実行する」）のとき、findLoose（包含一致）では取れないのを救う。
+// 一致数が最大かつ唯一のときだけ採用、同点で曖昧なら -1（誤タップ防止）。used の index は除外。
+export function bestOverlapIndex(cands, target, used = []) {
+  const toks = (s) => normLoose(s).match(/[A-Za-z0-9]+|[一-龠々〆ヶ]+|[ぁ-ん]+|[ァ-ヴー]+/g) || [];
+  const tt = toks(target);
+  if (tt.length === 0) return -1;
+  const scores = cands.map((c, j) => {
+    if (used.includes(j)) return -1;
+    const cn = normLoose(c);
+    let s = 0;
+    for (const t of tt) if (t.length >= 1 && cn.includes(t)) s += t.length; // 長い一致ほど高得点
+    return s;
+  });
+  let best = -1, bestScore = 0, second = 0;
+  scores.forEach((s, j) => {
+    if (s > bestScore) { second = bestScore; bestScore = s; best = j; }
+    else if (s > second) second = s;
+  });
+  return bestScore > 0 && bestScore > second ? best : -1;
+}
+
 // 「### 正しい順序」/「## 正しい順序」の番号付きリスト → 手順テキスト配列（順序どおり）。
 export function extractOrder(expl) {
   if (!expl) return [];
@@ -393,7 +432,7 @@ export async function clearReview(page, index, opts = {}) {
       log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corr.text ?? (corr.seq || []).join(" / ")}」で再回答`);
       if (s.isCloze) await answerCloze(page, corr.seq?.length ? corr.seq : (corr.text ? [corr.text] : []), s.clozeBlanks);
       else if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
-      else if (s.isOrdering) await answerOrdering(page, s, hit?.order ?? []);
+      else if (s.isOrdering) await answerOrdering(page, s, corr.seq?.length ? corr.seq : (hit?.order ?? []));
       else await answerChoice(page, { correctText: corr.text ?? null, index: 0, log });
     } else if (!s.answered) {
       if (s.isCloze) {
@@ -464,13 +503,31 @@ export async function clearReview(page, index, opts = {}) {
       // 診断DOMは「フィードバック直後・他操作の前」に同期で確保する（遷移フラッシュでホームを撮る racy 防止）。
       let wrongHtml = null;
       try { wrongHtml = await page.content(); } catch {}
-      const learned = await readCorrectFromFeedback(page, s);
-      if (learned && (learned.text || learned.seq?.length)) {
-        corrections.set(sig, learned);
-        log(`     ✎ 正解を学習: 「${learned.text ?? learned.seq.join(" / ")}」（再提示されたらこれで答え直す）`);
+      // 並べ替えは緑枠1セルでは復元できないが、フィードバックの「A→B→C の順です」から正解順を学習できる。
+      if (s.isOrdering) {
+        const fbText = await page
+          .evaluate(() => {
+            const el = document.querySelector('[data-testid="quiz-feedback"]');
+            return (el ? el.innerText : document.body.innerText) || "";
+          })
+          .catch(() => "");
+        const seq = extractOrderFromFeedbackText(fbText);
+        if (seq.length >= 2) {
+          corrections.set(sig, { seq });
+          log(`     ✎ 正解順を学習: 「${seq.join(" → ")}」（フィードバックの“の順”から・再提示で答え直す）`);
+        } else {
+          if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
+          log(`     ⚠ 不正解だが正解順を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+        }
       } else {
-        if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
-        log(`     ⚠ 不正解だが緑枠から正解を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+        const learned = await readCorrectFromFeedback(page, s);
+        if (learned && (learned.text || learned.seq?.length)) {
+          corrections.set(sig, learned);
+          log(`     ✎ 正解を学習: 「${learned.text ?? learned.seq.join(" / ")}」（再提示されたらこれで答え直す）`);
+        } else {
+          if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
+          log(`     ⚠ 不正解だが緑枠から正解を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+        }
       }
     }
 
@@ -749,7 +806,9 @@ export async function answerOrdering(page, s, order = []) {
       if (remaining.length === 0) break;
       const texts = [];
       for (const el of remaining) texts.push(((await el.textContent()) || "").replace(/\s+/g, " ").trim());
-      const idx = findLoose(texts, step);
+      let idx = findLoose(texts, step);
+      // 包含一致で取れない＝略語ヒント（「コマンド実行」）と選択肢フル文の対応 → トークン重なりで救う。
+      if (idx === -1) idx = bestOverlapIndex(texts, step);
       if (idx !== -1) await remaining[idx].click().catch(() => {});
       else await remaining[0].click().catch(() => {}); // 取りこぼしは先頭で前進
       await sleep(600);
