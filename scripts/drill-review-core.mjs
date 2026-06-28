@@ -162,8 +162,18 @@ export function extractClozeSequence(expl, options, blankCount) {
   if (di >= 0) primary = noList.slice(di);
   const wi = primary.search(/間違い選択肢|どこが違う/);
   if (wi > 0) primary = primary.slice(0, wi);
-  let seq = tryOn(primary);
-  // フォールバック: 正解理由の本文だけでは空欄数に満たない場合、選択肢列挙を除いた全文で再走査。
+  // ⚠ 最優先: 正解理由本文の「…」『…』で“強調された”語句だけを走査する。
+  // 裸の indexOf は短い選択肢語が地の文の複合語に部分一致して誤順になる（実ライブ CSS L5 Q5＝
+  // 選択肢「要素」が「インライン要素」に最速一致し [要素,中身] と誤導出。正解は [中身,横]）。
+  // 答えの語は本文で引用符付きで強調される一方（例「中身の幅だけ取って横に並ぶ」「横」）、地の文の
+  // 複合語は引用されないため、引用句に限定すると複合語の部分一致を排除して正しい出現順を引ける。
+  const quoted = [...primary.matchAll(/[「『]([^「」『』]+)[」』]/g)].map((m) => m[1]).join("　");
+  let seq = quoted ? tryOn(quoted) : [];
+  // ガード: 引用句が選択肢を blankCount より多く含む＝答えの強調でなく“構造的な列挙”（例 CSS L4 Q5
+  // 「content→padding→border→margin」）であり、列挙順を答え順と誤認する。→ 引用句を捨て本文へ。
+  if (seq.length > blankCount) seq = [];
+  // フォールバック: 引用句で足りなければ正解理由の本文全体 → 選択肢列挙を除いた全文の順で再走査。
+  if (seq.length < blankCount) seq = tryOn(primary);
   if (seq.length < blankCount) seq = tryOn(noList);
   return seq.length >= blankCount ? seq.slice(0, blankCount) : [];
 }
