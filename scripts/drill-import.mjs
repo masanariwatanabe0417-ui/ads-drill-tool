@@ -132,12 +132,25 @@ async function resolveLessonName(title) {
 // レッスンはレッスンごとに再検出する（③ループで次のレッスンへ進むたびに変わるため）。
 const first = await readState(page);
 const series = process.env.SERIES || first.series || capturedSeries || "不明シリーズ";
-const course0 = process.env.COURSE || first.contextLabel || "不明コース";
+// course0（コース名）はコースごとに確定する（シリーズ一括では次コースで変わる）→ 下のコースループ内で設定。
+
+// MAX_COURSES: 既定1＝単一コース（従来動作）。2以上で「シリーズ半自動」＝コース内は全自動で巡回し、
+// コース完了ごとに一旦停止→操作者が次コースの『Lesson 1 の Q1』へ移動→確認(.import-go/Enter)で継続。
+// コース完了画面のUIは未知なので自動遷移はせず、コース間だけ手動にする堅牢設計（暴走課金も防げる）。
+const MAX_COURSES = parseInt(process.env.MAX_COURSES ?? "1", 10);
+const seriesMode = MAX_COURSES > 1;
 
 // MAX_LESSONS: 既定1＝単一レッスン（従来動作）。2以上で「コース一括ループ（③）」＝1レッスン取込→
 // 復習突破→次のレッスンへ遷移→次レッスンのQ1検出→取込継続 を、現コース内で最大この数だけ繰り返す。
-const MAX_LESSONS = parseInt(process.env.MAX_LESSONS ?? "1", 10);
+// シリーズ半自動(seriesMode)はコース内のレッスン巡回が前提なので、未指定(=1)なら20に引き上げる。
+const MAX_LESSONS = Math.max(parseInt(process.env.MAX_LESSONS ?? "1", 10), seriesMode ? 20 : 1);
 const loopMode = MAX_LESSONS > 1;
+
+// MANUAL_ADVANCE=1: 「レッスン単位・堅牢モード」。復習クリア（②自動突破）に一切依存せず、
+// 1レッスン取込→操作者が次レッスン(別コースも可)のQ1へ手動で移動→確認で継続、をブラウザを
+// 開いたまま繰り返す。復習を通さないので線結び/穴埋め等あらゆる問題タイプで詰まらない
+// （復習自動突破が脆い問題タイプがあるための確実な取り込み手段。2026-06-28 採用）。
+const MANUAL_ADVANCE = process.env.MANUAL_ADVANCE === "1";
 
 // ONLY="Q5,Q7" を指定すると、その問だけ保存（POST）し、他は巡回（解答して次へ）のみ。
 // 既に良好に取り込めた問を上書きせず、特定問だけ再検証・修正したいときに使う。
@@ -355,7 +368,66 @@ async function importLesson({ series, course, lesson }) {
 // 次レッスンのQ1を検出 → 取込継続 を、現コース内で繰り返す。
 // MAX_LESSONS=1（既定）なら従来どおり単一レッスンで終了する。
 let totalImported = 0;
-let prevLessonName = null;
+
+// === レッスン単位・堅牢モード（MANUAL_ADVANCE）===
+// 復習自動突破を使わず、各レッスンのデータ取り込みだけを確実に行う。次レッスンへの移動は操作者が
+// ドリル上で行い（復習は手動で済ませる/コース地図から飛ぶ等は任意）、Q1表示後に確認で継続する。
+if (MANUAL_ADVANCE) {
+  let n = 0;
+  // 何レッスンでも継続（終了は Ctrl+C）。各レッスンで開始/継続の確認を挟む。
+  while (true) {
+    // Q1（解答ボタン）が出るまで待つ。初回は既に表示済み。
+    const gotQ1 = await page
+      .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 600000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!gotQ1) { console.log("⚠ Q1を検出できませんでした。終了します。"); break; }
+    await sleep(500);
+    const st = await readState(page);
+    const course = process.env.COURSE || st.contextLabel || "不明コース";
+    const lesson = (await resolveLessonName(st.title)) || st.title || "不明レッスン";
+    console.log(`\n=== 取り込み先（レッスン単位 ${n + 1}）===`);
+    console.log(`  シリーズ: ${series}`);
+    console.log(`  コース  : ${course}`);
+    console.log(`  レッスン: ${lesson}`);
+    console.log(`  総問題数: ${st.total ?? "不明"}`);
+    console.log("\n  この内容で取り込むなら開始合図を。違う/「不明〜」なら Ctrl+C。");
+    await waitForGo("\n  → 開始するには Enter / .import-go … ");
+    const imp = await importLesson({ series, course, lesson });
+    totalImported += imp;
+    n += 1;
+    console.log(`\n取り込み完了。${imp} 問を保存（このレッスン）/ 累計 ${totalImported} 問・${n} レッスン。`);
+    console.log("\n次のレッスン（別コースでも可）の『Q1』まで進めてください。終了する場合は Ctrl+C。");
+    console.log("  （ドリルの復習は手動で済ませる/コース地図から次レッスンへ飛ぶ等、移動方法は任意）");
+    await waitForGo("  → 次レッスンのQ1を表示したら継続… ");
+  }
+  console.log(`\n=== レッスン単位取り込み終了 ===  累計 ${totalImported} 問を保存しました。`);
+  console.log("アプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
+  await ctx.close().catch(() => {});
+  process.exit(0);
+}
+
+// === シリーズ半自動ループ（コース跨ぎ）===
+// コース内は従来のレッスン一括ループ。MAX_COURSES>1 のとき、コース完了後に操作者が次コースの
+// Lesson1 Q1 へ移動するのを待って継続する（コース間だけ手動＝確認チェックポイントを兼ねる）。
+for (let C = 0; C < MAX_COURSES; C++) {
+ // --- 2コース目以降: 次コースの Lesson1 Q1 へ移動してもらう ---
+ if (C > 0) {
+   console.log(`\n========== 次コース（${C + 1}/${MAX_COURSES}）==========`);
+   console.log("次のコースの『Lesson 1 の Q1』まで進めてください…（最大10分／中断は Ctrl+C）");
+   const gotNext = await page
+     .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 600000 })
+     .then(() => true)
+     .catch(() => false);
+   if (!gotNext) { console.log("⚠ 次コースのQ1を検出できませんでした。シリーズ取り込みを終了します。"); break; }
+   await sleep(800);
+ }
+ // このコースのコース名を確定（初回は env COURSE 優先、以降は DOM 検出）。
+ const cstate = await readState(page);
+ const course0 = (C === 0 ? (process.env.COURSE || cstate.contextLabel) : cstate.contextLabel) || "不明コース";
+ let prevLessonName = null;
+ let courseImported = 0;
+ let lastReview = null; // 直近の復習結果（コースが正常完了したか途中失敗かの判定に使う）
 
 for (let L = 0; L < MAX_LESSONS; L++) {
   // --- (A) このレッスンの階層を確定（series/course は course0 を継承、lesson は毎回再検出）---
@@ -396,6 +468,7 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   // --- (C) このレッスンを取り込む ---
   const imported = await importLesson({ series, course: course0, lesson });
   totalImported += imported;
+  courseImported += imported;
   console.log(`\n取り込み完了。${imported} 問を保存（累計 ${totalImported} 問）。`);
   prevLessonName = lesson;
 
@@ -419,11 +492,12 @@ for (let L = 0; L < MAX_LESSONS; L++) {
     waitForGo, // 未知問題で停止する際の再開待ち（.import-go / Enter）。loopMode時は auto:true で使われない
     dumpDir: __dirnameEarly,
   });
+  lastReview = r;
 
   // --- (F) 単一モード or 次レッスン無し（コース終端）なら終了 ---
   if (!loopMode) break;
   if (!r.advanced) {
-    console.log("\n「次のレッスンへ」が無い＝コース終端とみなして取り込みを終了します。");
+    console.log("\n「次のレッスンへ」が無い＝コース終端に到達（このコールは完了）。");
     break;
   }
 
@@ -444,7 +518,21 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   await sleep(800); // 描画安定待ち
 }
 
-console.log(`\n=== コース取り込み終了 ===  累計 ${totalImported} 問を保存しました。`);
+ console.log(`\n=== コース「${course0}」取り込み終了 ===  このコース ${courseImported} 問 / シリーズ累計 ${totalImported} 問。`);
+ if (!seriesMode) break;
+ // ⚠ 設計ガード: コースが「正常完了」でなく「途中で詰まって停止」した場合は次コースへ進ませない。
+ //   正常なコース終端は復習を通過しレッスン完了(レッスン完了!)に到達して『次のレッスンへ』が無い状態
+ //   （lastReview.advanced=false かつ lastReview.done.cleared=true）。途中の復習失敗(stuck)は
+ //   cleared=false のままなので、これを検出して停止し、次コースへ誤って進むのを防ぐ。
+ const endedCleanly = !!lastReview && lastReview.advanced === false && lastReview.done && lastReview.done.cleared === true;
+ if (!endedCleanly) {
+   console.log("\n⚠ このコースは正常完了でなく途中で停止した可能性が高い（復習を突破できず）。");
+   console.log("   次コースへは進まずシリーズ取り込みを停止します。残りは MANUAL_ADVANCE=1 等で対応してください。");
+   break;
+ }
+} // end course loop
+
+console.log(`\n=== ${seriesMode ? "シリーズ" : "コース"}取り込み終了 ===  累計 ${totalImported} 問を保存しました。`);
 console.log("アプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
 await ctx.close().catch(() => {});
 process.exit(0);
