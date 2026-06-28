@@ -78,20 +78,40 @@ export const normLoose = (s) =>
     .replace(/\s+/g, "")
     .trim();
 
+// すべての括弧注記（（…）/(…)）を除く（normLoose 済み文字列に適用する想定）。
+// 保存解説の正しい順序/対応に AI が冗長な言い換え注記を付け、ドリル表示（注記が短い/無い）と
+// ゆるい照合が外れるケースを救うための最終フォールバック用（例「リクエスト（リクエスト＝注文）」）。
+const stripParens = (s) => (s || "").replace(/[（(][^（）()]*[）)]/g, "");
+
 // 候補配列 cands から target にゆるく一致する要素の index を返す（無ければ -1）。
-// 完全一致 → 一意な包含（短い方が4字以上）。
+// 完全一致 → 一意な包含（短い方が4字以上）→ 括弧注記を除いた完全一致/一意な包含。
 export function findLoose(cands, target) {
   const t = normLoose(target);
   if (!t) return -1;
   const ns = cands.map(normLoose);
   let i = ns.indexOf(t);
   if (i !== -1) return i;
-  const hits = [];
-  for (let j = 0; j < ns.length; j++) {
-    const a = ns[j];
-    if (a.length >= 4 && (a.includes(t) || t.includes(a))) hits.push(j);
-  }
-  return hits.length === 1 ? hits[0] : -1;
+  const uniqueInclude = (arr, key) => {
+    if (key.length < 4) return -1;
+    const hits = [];
+    for (let j = 0; j < arr.length; j++) {
+      const a = arr[j];
+      if (a.length >= 4 && (a.includes(key) || key.includes(a))) hits.push(j);
+    }
+    return hits.length === 1 ? hits[0] : -1;
+  };
+  i = uniqueInclude(ns, t);
+  if (i !== -1) return i;
+  // フォールバック: 両側から括弧注記を除いて再照合（保存とドリル表示の注記差を吸収）。
+  // 短い語（<4字）や、注記を外すと複数候補が同一になる紛らわしいケースは曖昧として -1（誤接続しない）。
+  const tp = stripParens(t);
+  if (tp.length < 4) return -1;
+  const np = ns.map(stripParens);
+  const exact = [];
+  for (let j = 0; j < np.length; j++) if (np[j] === tp) exact.push(j);
+  if (exact.length === 1) return exact[0];
+  if (exact.length > 1) return -1; // 注記除去で同一になる候補が複数 → 曖昧
+  return uniqueInclude(np, tp); // 完全一致が無ければ一意な包含のみ採用
 }
 
 // 「### 正しい順序」/「## 正しい順序」の番号付きリスト → 手順テキスト配列（順序どおり）。
