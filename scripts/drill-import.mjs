@@ -374,32 +374,40 @@ let totalImported = 0;
 // ドリル上で行い（復習は手動で済ませる/コース地図から飛ぶ等は任意）、Q1表示後に確認で継続する。
 if (MANUAL_ADVANCE) {
   let n = 0;
-  // 何レッスンでも継続（終了は Ctrl+C）。各レッスンで開始/継続の確認を挟む。
+  // 何レッスンでも継続（終了は Ctrl+C）。単一ゲート設計＝「合図が先 → 検出 → 復習/不明ならスキップして
+  // 待機 → 取り込み」。⚠ ドリルは各レッスン後に必ず復習が入り、復習を“正答して”完了しないと次レッスンへ
+  // 進めない（スキップ不可）。操作者が復習を終えてレッスンのQ1まで進めてから合図する運用。
   while (true) {
-    // Q1（解答ボタン）が出るまで待つ。初回は既に表示済み。
+    await waitForGo(
+      n === 0
+        ? "\n  → 取り込むレッスンのQ1を表示したら Enter / .import-go …（終了は Ctrl+C）"
+        : "\n  → 次のレッスンのQ1を表示したら Enter / .import-go …（終了は Ctrl+C）"
+    );
     const gotQ1 = await page
-      .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 600000 })
+      .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 60000 })
       .then(() => true)
       .catch(() => false);
-    if (!gotQ1) { console.log("⚠ Q1を検出できませんでした。終了します。"); break; }
-    await sleep(500);
+    if (!gotQ1) { console.log("⚠ Q1（解答ボタン）が見当たりません。レッスンのQ1を表示してからもう一度合図を。"); continue; }
+    await sleep(400);
     const st = await readState(page);
     const course = process.env.COURSE || st.contextLabel || "不明コース";
     const lesson = (await resolveLessonName(st.title)) || st.title || "不明レッスン";
+    // ガード: 復習中/不明コースの画面は「レッスンのQ1」ではない → 取り込まずに待機へ戻る（誤保存防止）。
+    if (!st.contextLabel || /復習/.test(st.title || "") || /復習/.test(lesson)) {
+      console.log(`\n⚠ いまの画面は「${lesson}」（復習中/不明）でレッスンのQ1ではありません。`);
+      console.log("   復習を最後まで正答して終え、次レッスンのQ1まで進めてから、もう一度合図してください。");
+      continue;
+    }
     console.log(`\n=== 取り込み先（レッスン単位 ${n + 1}）===`);
     console.log(`  シリーズ: ${series}`);
     console.log(`  コース  : ${course}`);
     console.log(`  レッスン: ${lesson}`);
     console.log(`  総問題数: ${st.total ?? "不明"}`);
-    console.log("\n  この内容で取り込むなら開始合図を。違う/「不明〜」なら Ctrl+C。");
-    await waitForGo("\n  → 開始するには Enter / .import-go … ");
     const imp = await importLesson({ series, course, lesson });
     totalImported += imp;
     n += 1;
     console.log(`\n取り込み完了。${imp} 問を保存（このレッスン）/ 累計 ${totalImported} 問・${n} レッスン。`);
-    console.log("\n次のレッスン（別コースでも可）の『Q1』まで進めてください。終了する場合は Ctrl+C。");
-    console.log("  （ドリルの復習は手動で済ませる/コース地図から次レッスンへ飛ぶ等、移動方法は任意）");
-    await waitForGo("  → 次レッスンのQ1を表示したら継続… ");
+    console.log("\n次のレッスン（別コースでも可）の『Q1』まで進めてください（復習を終えてから／終了は Ctrl+C）。");
   }
   console.log(`\n=== レッスン単位取り込み終了 ===  累計 ${totalImported} 問を保存しました。`);
   console.log("アプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
