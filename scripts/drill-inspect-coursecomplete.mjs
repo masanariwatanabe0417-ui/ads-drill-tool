@@ -63,12 +63,24 @@ function waitForStep(promptText) {
   });
 }
 
+// SPAがホーム画面をDOMに残すため、.first() は隠し要素(進捗ヘッダーやホームのコースカード)に当たる
+// （[[matching-import-is-1to1-positional]] と同じ罠）。対策＝“可視”要素だけを順に試して最初に
+// 押せたものをクリックする。label="START" は、コース一覧で次コースのタイル（唯一 START を含む可視
+// タイル）を押すための特例トークン。
+async function clickFirstVisible(loc) {
+  const n = await loc.count().catch(() => 0);
+  for (let i = 0; i < n; i++) {
+    const el = loc.nth(i);
+    if (await el.isVisible().catch(() => false)) { await el.click().catch(() => {}); return true; }
+  }
+  return false;
+}
+
 async function clickByLabel(page, label) {
-  // 「次のレッスンへ」等と同じ tabindex=0 div を想定。部分一致 → 完全一致の順で堅牢に。
-  const byTab = page.locator('div[tabindex="0"]').filter({ hasText: label });
-  if ((await byTab.count().catch(() => 0)) > 0) { await byTab.first().click().catch(() => {}); return true; }
-  const byText = page.getByText(label, { exact: true });
-  if ((await byText.count().catch(() => 0)) > 0) { await byText.first().click().catch(() => {}); return true; }
+  // 1) tabindex=0 の“可視”要素で部分一致（次のレッスンへ／コース完了を見る／STARTタイル 等）
+  if (await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: label }))) return true;
+  // 2) 可視テキスト完全一致のフォールバック
+  if (await clickFirstVisible(page.getByText(label, { exact: true }))) return true;
   return false;
 }
 

@@ -549,6 +549,61 @@ export async function clearReview(page, index, opts = {}) {
   return { known, corrected, unknownList, done, advanced };
 }
 
+// 可視要素だけを DOM 順に試し、最初に押せたものをクリックする。
+// ★SPAがホーム画面をDOMに残すため、.first()/getByText は隠し要素に当たる（[[matching-import-is-1to1-positional]]
+//   と同根の罠）。可視判定でこれを除外する。opts は click に渡す（force/position など）。
+async function clickFirstVisible(loc, opts = {}) {
+  const n = await loc.count().catch(() => 0);
+  for (let i = 0; i < n; i++) {
+    const el = loc.nth(i);
+    if (await el.isVisible().catch(() => false)) { await el.click({ timeout: 5000, ...opts }).catch(() => {}); return true; }
+  }
+  return false;
+}
+
+// コース最終レッスンの「レッスン完了!」画面から、次コースの Lesson1 Q1 まで自動で入る。
+// 実機記録(2026-06-28k／drill-inspect-handoff.mjs)で確定した経路:
+//   ①「コース完了を見る」→ ②「次のコースへ」→ ③ シリーズのコース一覧で“STARTバッジ付き次コース”
+//   タイルの再生ボタン → ④ コース紹介で「Lesson 1」の番号ボタン → ⑤ Q1。
+// ★罠: タイル/レッスン行の“中央”は裏に残ったホーム画面の隠し要素に覆われ、Playwright の center クリックが
+//   弾かれる。実機では各タイル内の小さい丸ボタン(.rounded-full / 番号バッジ)＝中央を外した縁だけが効く。
+//   よって丸ボタンを直接クリックし、無ければ縁寄り座標で force クリックする。
+// 戻り値: 次コースの解答ボタン(Q1)を検出できたら true。
+export async function advanceToNextCourse(page, { log = console.log } = {}) {
+  // ① レッスン完了画面 → コース完了画面
+  log("  [次コース①] 「コース完了を見る」…");
+  await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: "コース完了を見る" }));
+  await sleep(2500);
+  // ② コース完了画面 → シリーズのコース一覧
+  log("  [次コース②] 「次のコースへ」…");
+  await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: "次のコースへ" }));
+  await sleep(2500);
+  // ③ コース一覧: STARTバッジを持つ“次コース”タイルの再生ボタン(.rounded-full)を直接クリック。
+  // ★force:true が必須（実機検証2026-06-28k）。裏に残ったホーム画面が接地点を覆い、通常クリックは
+  //   Playwright の「receives events」判定で弾かれてタイムアウトする。force で判定をスキップし実体へ当てる。
+  log("  [次コース③] コース一覧の STARTタイル（再生ボタン・force）…");
+  const startTile = page.locator('button[role="button"]').filter({ hasText: "START" });
+  if (!(await clickFirstVisible(startTile.locator("div.rounded-full"), { force: true }))) {
+    await clickFirstVisible(startTile, { force: true, position: { x: 359, y: 36 } });
+  }
+  // コース紹介（レッスン一覧）の描画を待つ。
+  await page.waitForFunction(() => /Lesson\s*1\b/.test(document.body.innerText || ""), { timeout: 15000 }).catch(() => {});
+  await sleep(1000);
+  // ④ コース紹介: 「Lesson 1」行の番号ボタン(tabindex=0)を押す → レッスンが開く。ここも同じ覆いがあるため force。
+  log("  [次コース④] コース紹介の「Lesson 1」（force）…");
+  const lesson1Row = page.locator("div.flex-row").filter({ hasText: "Lesson 1" });
+  if (!(await clickFirstVisible(lesson1Row.locator('[tabindex="0"]'), { force: true }))) {
+    await clickFirstVisible(lesson1Row, { force: true, position: { x: 100, y: 36 } });
+  }
+  // ⑤ Q1（解答ボタン）の出現を待つ。
+  const ok = await page
+    .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 })
+    .then(() => true)
+    .catch(() => false);
+  log(ok ? "  [次コース⑤] ✅ Lesson1 Q1 に到達。" : "  [次コース⑤] ⚠ Q1 を検出できず。");
+  return ok;
+}
+
 // 選択式（aria付き4択・○✕・aria無し4択の「選択肢から選んでください」型）を堅牢に回答する。
 // 実機の確定フロー（観察済み）: 選択肢タップ→当該が選択状態(濃い枠 rgb(15,23,42)/bg rgba(15,23,42,0.15))
 // →「回答する」(quiz-submit)が出現→押す→判定(quiz-feedback)。

@@ -30,7 +30,7 @@ import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
 import { readState, sleep } from "./drill-dom.mjs";
-import { fetchIndex, clearReview, answerChoice, answerCloze } from "./drill-review-core.mjs";
+import { fetchIndex, clearReview, answerChoice, answerCloze, advanceToNextCourse } from "./drill-review-core.mjs";
 
 const __dirnameEarly = path.dirname(fileURLToPath(import.meta.url));
 const GO_FILE = path.join(__dirnameEarly, ".import-go");
@@ -134,11 +134,13 @@ const first = await readState(page);
 const series = process.env.SERIES || first.series || capturedSeries || "不明シリーズ";
 // course0（コース名）はコースごとに確定する（シリーズ一括では次コースで変わる）→ 下のコースループ内で設定。
 
-// MAX_COURSES: 既定1＝単一コース（従来動作）。2以上で「シリーズ半自動」＝コース内は全自動で巡回し、
-// コース完了ごとに一旦停止→操作者が次コースの『Lesson 1 の Q1』へ移動→確認(.import-go/Enter)で継続。
-// コース完了画面のUIは未知なので自動遷移はせず、コース間だけ手動にする堅牢設計（暴走課金も防げる）。
+// MAX_COURSES: 既定1＝単一コース（従来動作）。2以上で「シリーズ一括」＝コース内は全自動で巡回し、
+// コース完了後は advanceToNextCourse() で次コースの Lesson1 Q1 まで“自動”でナビして継続する（2026-06-28k
+// の実機記録で経路確定）。自動ナビが Q1 に到達できない場合は従来どおり手動移動（最大10分待ち）にフォールバック。
 const MAX_COURSES = parseInt(process.env.MAX_COURSES ?? "1", 10);
 const seriesMode = MAX_COURSES > 1;
+// MANUAL_NEXT_COURSE=1: コース間の自動ナビを使わず、操作者が手で次コースのQ1まで移動する従来挙動に固定。
+const MANUAL_NEXT_COURSE = process.env.MANUAL_NEXT_COURSE === "1";
 
 // MAX_LESSONS: 既定1＝単一レッスン（従来動作）。2以上で「コース一括ループ（③）」＝1レッスン取込→
 // 復習突破→次のレッスンへ遷移→次レッスンのQ1検出→取込継続 を、現コース内で最大この数だけ繰り返す。
@@ -422,11 +424,20 @@ for (let C = 0; C < MAX_COURSES; C++) {
  // --- 2コース目以降: 次コースの Lesson1 Q1 へ移動してもらう ---
  if (C > 0) {
    console.log(`\n========== 次コース（${C + 1}/${MAX_COURSES}）==========`);
-   console.log("次のコースの『Lesson 1 の Q1』まで進めてください…（最大10分／中断は Ctrl+C）");
-   const gotNext = await page
-     .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 600000 })
-     .then(() => true)
-     .catch(() => false);
+   let gotNext = false;
+   // --- まずコース間を自動ナビ（コース完了→次のコースへ→STARTタイル→Lesson1→Q1）---
+   if (!MANUAL_NEXT_COURSE) {
+     console.log("[自動] コース完了画面 → 次コースの Lesson1 Q1 へ自動ナビ…");
+     gotNext = await advanceToNextCourse(page);
+   }
+   // --- 自動ナビ不可（or 手動指定）なら従来どおり手動移動を待つ ---
+   if (!gotNext) {
+     console.log("次のコースの『Lesson 1 の Q1』まで進めてください…（最大10分／中断は Ctrl+C）");
+     gotNext = await page
+       .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 600000 })
+       .then(() => true)
+       .catch(() => false);
+   }
    if (!gotNext) { console.log("⚠ 次コースのQ1を検出できませんでした。シリーズ取り込みを終了します。"); break; }
    await sleep(800);
  }
