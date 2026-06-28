@@ -168,31 +168,61 @@ async function importLesson({ series, course, lesson }) {
     // まだ回答していなければ回答する
     if (!s.answered) {
       if (s.isMatching) {
-        // マッチング（線結び）: 左[i] をタップ → 右[i] をタップ で1ペア接続、を全ペア繰り返す。
-        // 正誤は問わない（解説に正しい対応が含まれる／88%閾値で1つ外れても完了する）。
-        const pairCount = Math.min(s.options.length, s.rightItems.length);
+        // マッチング（線結び）は実体が「左N ↔ 右N の1対1」。右ラベルは重複し得る
+        // （例: 右が CSS/HTML/HTML/CSS の4項目＝見た目は2種でも実体は別々の4要素）。
+        // ⚠ 右を「テキストで重複排除」して同名を1つにまとめると、2つ目以降の同名右に接続できず
+        //   4/4 に到達できない→確定(quiz-submit)が出ない→解説(quiz-feedback)が取れずスキップ→
+        //   「次へ」も無くレッスン終端と誤判定して停止する事故になる（Lesson4 Q7「HTML/CSSの担当」で実証）。
+        //   そこで右は重複排除せず DOM 出現順で扱い、left[i] → 右の i 番目（位置）を 1:1 で全左ぶん接続する。
+        //   正誤は問わない（公式解説に正しい対応が含まれる）。confirm: 位置接続で 4/4→quiz-submit→feedback 採取OK。
+        const SKIP_RIGHT = ["リセット", "確定", "回答する", "次の問題へ", "次へ"];
+        // 右項目（タップ可能 div[tabindex]、操作ボタン・左ラベルを除く）を DOM 順に数える。
+        const rightCount = await page.evaluate((SKIP) => {
+          const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+          const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
+          const leftTexts = new Set(leftEls.map((e) => norm(e.textContent)));
+          let c = leftEls[0] || document.body;
+          while (c && !leftEls.every((o) => c.contains(o))) c = c.parentElement;
+          c = c || document.body;
+          const skip = new Set(SKIP);
+          let n = 0;
+          for (const el of c.querySelectorAll("div[tabindex]:not([data-testid])")) {
+            const t = norm(el.textContent);
+            if (!t || t.length > 40 || leftTexts.has(t) || skip.has(t)) continue;
+            n++;
+          }
+          return n;
+        }, SKIP_RIGHT);
+        const pairCount = Math.min(s.options.length, rightCount || s.options.length);
         for (let i = 0; i < pairCount; i++) {
+          // 左をタップ→右が活性化→右の i 番目（DOM出現順）を位置で特定してタグ付け→クリック。
           await page.click(`[data-testid="quiz-answer-option-${i}"]`, { timeout: 5000 }).catch(() => {});
           await sleep(500);
-          // 右項目は data-testid が無いため、問題コンテナ内をテキストで特定して一時タグ付け→クリック。
           await page.evaluate(
-            ({ idx, label }) => {
+            ({ idx, SKIP }) => {
               const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
               const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
-              let container = leftEls[0] || document.body;
-              while (container && !leftEls.every((o) => container.contains(o))) container = container.parentElement;
-              container = container || document.body;
+              const leftTexts = new Set(leftEls.map((e) => norm(e.textContent)));
+              let c = leftEls[0] || document.body;
+              while (c && !leftEls.every((o) => c.contains(o))) c = c.parentElement;
+              c = c || document.body;
+              const skip = new Set(SKIP);
               document.querySelectorAll("[data-import-ri]").forEach((el) => el.removeAttribute("data-import-ri"));
-              for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
-                if (norm(el.textContent) === label) { el.setAttribute("data-import-ri", String(idx)); break; }
+              let n = 0;
+              for (const el of c.querySelectorAll("div[tabindex]:not([data-testid])")) {
+                const t = norm(el.textContent);
+                if (!t || t.length > 40 || leftTexts.has(t) || skip.has(t)) continue;
+                if (n === idx) { el.setAttribute("data-import-ri", "1"); break; }
+                n++;
               }
             },
-            { idx: i, label: s.rightItems[i] }
+            { idx: i, SKIP: SKIP_RIGHT }
           );
-          await page.click(`[data-import-ri="${i}"]`, { timeout: 5000 }).catch(() => {});
+          await page.click(`[data-import-ri="1"]`, { timeout: 5000 }).catch(() => {});
           await sleep(500);
         }
         await sleep(400);
+        // 4/4 完成で quiz-submit が出現する（確定テキストは fallback）。
         await page.click('[data-testid="quiz-submit"]', { timeout: 5000 }).catch(() => {});
         await page.getByText("確定", { exact: true }).first().click({ timeout: 3000 }).catch(() => {});
       } else if (s.isOrdering) {

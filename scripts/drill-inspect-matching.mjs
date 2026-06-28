@@ -76,13 +76,16 @@ async function readMatching() {
 
     // 右項目: 問題コンテナ内の、tabindex を持つが data-testid が無いタップ可能 div。
     //         左項目テキストは除外。ホーム画面のカードはコンテナ外なので混入しない。
+    // ⚠ 重複排除しない: 右ラベルは重複し得る（例 CSS/HTML/HTML/CSS の4項目）。実体は
+    //   左N↔右N の1対1なので、同名でも別要素として DOM 出現順にすべて拾う。
+    const SKIP = new Set(["リセット", "確定", "回答する", "次の問題へ", "次へ"]);
     const right = [];
     if (container) {
       for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
         const t = norm(el.textContent);
         if (!t || t.length > 40) continue;
         if (leftTexts.has(t)) continue;
-        if (right.some((r) => r.text === t)) continue;
+        if (SKIP.has(t)) continue;
         right.push({
           text: t,
           tabindex: el.getAttribute("tabindex"),
@@ -138,6 +141,29 @@ async function tagRightItems(labels) {
     }
     return found;
   }, labels);
+}
+
+// 右項目を「DOM出現順の idx 番目」を位置で特定して data-probe-ri="1" を付ける（同名重複に強い）。
+// 右ラベルが重複（CSS/HTML/HTML/CSS）しても、テキストでなく位置で確実に各右へ接続できる。
+async function tagRightByIndex(idx) {
+  return page.evaluate((idx) => {
+    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    document.querySelectorAll("[data-probe-ri]").forEach((el) => el.removeAttribute("data-probe-ri"));
+    const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
+    const leftTexts = new Set(leftEls.map((e) => norm(e.textContent)));
+    let container = leftEls[0] || document.body;
+    while (container && !leftEls.every((o) => container.contains(o))) container = container.parentElement;
+    container = container || document.body;
+    const SKIP = new Set(["リセット", "確定", "回答する", "次の問題へ", "次へ"]);
+    let n = 0;
+    for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
+      const t = norm(el.textContent);
+      if (!t || t.length > 40 || leftTexts.has(t) || SKIP.has(t)) continue;
+      if (n === idx) { el.setAttribute("data-probe-ri", "1"); return true; }
+      n++;
+    }
+    return false;
+  }, idx);
 }
 
 // 回答後フィードバックの本文を読む（quiz-feedback がある前提。無ければ画面全体から推定）。
@@ -254,16 +280,17 @@ m.right.forEach((r, i) => console.log(`    [${i}] 「${r.text}」 tabindex=${r.t
 await dump("00-initial");
 
 const rightLabels = m.right.map((r) => r.text);
-const pairCount = Math.min(m.left.length, m.right.length);
-if (pairCount < 2 || rightLabels.length < 2) {
+// 必要ペア数＝左の全項目。右は左と同数あり（同名重複を含む）1対1で接続する。
+const pairCount = m.left.length;
+if (pairCount < 2 || rightLabels.length < 1) {
   console.log("左右の項目を十分に検出できませんでした。00-initial のダンプを確認してください。終了します。");
   await ctx.close().catch(() => {});
   process.exit(1);
 }
 
-// --- 左[i] → 右[i] を順に接続 ---
+// --- 左[i] → 右[i % 右数] を順に接続（全左を必ず繋ぐ） ---
 for (let i = 0; i < pairCount; i++) {
-  console.log(`\n--- ペア ${i}: 左「${m.left[i].text}」 → 右「${rightLabels[i]}」 ---`);
+  console.log(`\n--- ペア ${i}: 左「${m.left[i].text}」 → 右[${i}]「${rightLabels[i] ?? "?"}」 ---`);
 
   // 左をタップ
   await page.click(`[data-testid="quiz-answer-option-${i}"]`, { timeout: 5000 }).catch((e) =>
@@ -280,12 +307,12 @@ for (let i = 0; i < pairCount; i++) {
     await dump(`01-after-left0`);
   }
 
-  // 右をタップ（テキストで再特定してタグ付け→クリック）
-  const tagged = await tagRightItems(rightLabels);
-  if (!(i in tagged)) {
-    console.log(`  ⚠ 右項目「${rightLabels[i]}」をタグ付けできませんでした（再レンダ後に消えた可能性）`);
+  // 右をタップ＝「DOM出現順の i 番目」を位置で特定してタグ付け→クリック（同名重複に強い）。
+  const tagged = await tagRightByIndex(i);
+  if (!tagged) {
+    console.log(`  ⚠ 右[${i}] を位置で特定できませんでした`);
   }
-  await page.click(`[data-probe-ri="${i}"]`, { timeout: 5000 }).catch((e) =>
+  await page.click(`[data-probe-ri="1"]`, { timeout: 5000 }).catch((e) =>
     console.log(`  ⚠ 右タップ失敗: ${e.message}`)
   );
   await sleep(700);
