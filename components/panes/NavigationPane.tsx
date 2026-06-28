@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap, Pencil } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap, Library, Pencil } from "lucide-react";
 import { StudyLog, TeacherView } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -18,6 +18,22 @@ interface NavigationPaneProps {
 type EditTarget = { courseKey: string; lessonName: string; oldQ: string };
 
 export default function NavigationPane({ studyLog, teacherView, onSelectView, onRenameQuestion }: NavigationPaneProps) {
+  // コースをシリーズ単位でまとめる（同一シリーズ名の複数コースを1つの見出しに束ねる）。
+  // 出現順は studyLog.courses の順を保ち、各シリーズ内のコース順も元の順を保つ。
+  const seriesGroups = useMemo(() => {
+    const order: string[] = [];
+    const map = new Map<string, typeof studyLog.courses>();
+    for (const course of studyLog.courses) {
+      const s = course.seriesName || "（シリーズ未設定）";
+      if (!map.has(s)) { map.set(s, []); order.push(s); }
+      map.get(s)!.push(course);
+    }
+    return order.map((seriesName) => ({ seriesName, courses: map.get(seriesName)! }));
+  }, [studyLog.courses]);
+
+  // シリーズは既定で展開（コースが見える状態）にしたいので「閉じているもの」を集合で持つ。
+  // コース／レッスンは既定で折りたたみ（従来どおり）なので「開いているもの」を集合で持つ。
+  const [collapsedSeries, setCollapsedSeries] = useState<Set<string>>(new Set());
   const [expandedCourses, setExpandedCourses] = useState<Set<string>>(new Set());
   const [expandedLessons, setExpandedLessons] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<EditTarget | null>(null);
@@ -34,9 +50,18 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
   const isEditing = (t: EditTarget) =>
     editing?.courseKey === t.courseKey && editing.lessonName === t.lessonName && editing.oldQ === t.oldQ;
 
-  // スクショ貼り付け後、新しいQが追加されたら自動展開
+  // スクショ貼り付け後、新しいQが追加されたら自動展開（シリーズ→コース→レッスンまで開く）
   useEffect(() => {
     if (teacherView?.type === "question") {
+      const series = studyLog.courses.find((c) => c.courseKey === teacherView.courseKey)?.seriesName;
+      if (series) {
+        setCollapsedSeries((prev) => {
+          if (!prev.has(series)) return prev;
+          const next = new Set(prev);
+          next.delete(series);
+          return next;
+        });
+      }
       setExpandedCourses((prev) => {
         const next = new Set(prev);
         next.add(teacherView.courseKey);
@@ -48,7 +73,14 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
         return next;
       });
     }
-  }, [teacherView]);
+  }, [teacherView, studyLog.courses]);
+
+  const toggleSeries = (name: string) =>
+    setCollapsedSeries((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) { next.delete(name); } else { next.add(name); }
+      return next;
+    });
 
   const toggleCourse = (key: string) =>
     setExpandedCourses((prev) => {
@@ -116,14 +148,41 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
           </div>
         ) : (
           <div className="p-2 space-y-1">
-            {studyLog.courses.map((course) => {
-              const courseView: TeacherView = { type: "course", courseKey: course.courseKey };
-              const courseExpanded = expandedCourses.has(course.courseKey);
-              const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+            {seriesGroups.map((group) => {
+              const seriesExpanded = !collapsedSeries.has(group.seriesName);
+              const seriesTotalQ = group.courses.reduce(
+                (s, c) => s + c.lessons.reduce((a, l) => a + l.questions.length, 0),
+                0
+              );
 
               return (
-                <div key={course.courseKey}>
-                  {/* コースまとめ行 */}
+                <div key={group.seriesName}>
+                  {/* シリーズ見出し行（展開トグルのみ＝シリーズ単体のまとめビューは無いので選択不可） */}
+                  <button
+                    onClick={() => toggleSeries(group.seriesName)}
+                    className="w-full flex items-center gap-0.5 px-1 py-1.5 rounded-md text-left hover:bg-accent"
+                  >
+                    {seriesExpanded
+                      ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                      : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
+                    <Library className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-bold truncate">{group.seriesName}</p>
+                      <p className="text-xs opacity-60">{group.courses.length}コース・{seriesTotalQ}問学習済み</p>
+                    </div>
+                  </button>
+
+                  {/* コース一覧（シリーズ配下） */}
+                  {seriesExpanded && (
+                    <div className="ml-3 pl-1 border-l space-y-1">
+                      {group.courses.map((course) => {
+                        const courseView: TeacherView = { type: "course", courseKey: course.courseKey };
+                        const courseExpanded = expandedCourses.has(course.courseKey);
+                        const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+
+                        return (
+                          <div key={course.courseKey}>
+                            {/* コースまとめ行 */}
                   <div className="flex items-center gap-0.5">
                     <button
                       onClick={() => toggleCourse(course.courseKey)}
@@ -144,8 +203,7 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                     >
                       <GraduationCap className="h-3.5 w-3.5 shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-xs font-semibold truncate">{course.seriesName}</p>
-                        <p className="text-xs truncate opacity-80">{course.courseName}</p>
+                        <p className="text-xs font-semibold truncate">{course.courseName}</p>
                         <p className="text-xs opacity-60">{totalQ}問学習済み</p>
                       </div>
                     </button>
@@ -260,6 +318,11 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                                   );
                                 })}
                               </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
                             )}
                           </div>
                         );
