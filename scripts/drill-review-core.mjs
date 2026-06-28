@@ -248,18 +248,29 @@ export function lookup(index, questionText) {
 }
 
 // 既知 studyLog を取得してインデックス化。失敗時は空 Map（全問が未知扱いになる）。
-export async function fetchIndex(studyLogApi, log = console.log) {
-  try {
-    const res = await fetch(studyLogApi);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const index = buildIndex(await res.json());
-    log(`studyLog 取得 OK（既知問題 ${index.size} 件）`);
-    return index;
-  } catch (e) {
-    log(`⚠ studyLog を取得できません（dev サーバは起動中？ ${studyLogApi}）: ${e.message}`);
-    log("  既知判定ができないため、全問が「未知」として報告されます。");
-    return new Map();
+// サーバーが一時的に落ちていても「全問が未知」になる二次被害を防ぐため、取得失敗(fetch失敗/5xx)は
+// 待って再試行する。復帰すれば既知判定が効き、復習は保存済み正解で自動突破できる。retries回試して
+// なお失敗した時だけ空Mapにフォールバック（＝サーバーが本当に死んでいる）。
+export async function fetchIndex(studyLogApi, log = console.log, { retries = 12, waitMs = 5000 } = {}) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(studyLogApi);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const index = buildIndex(await res.json());
+      log(`studyLog 取得 OK（既知問題 ${index.size} 件）`);
+      return index;
+    } catch (e) {
+      if (attempt < retries) {
+        log(`⚠ studyLog を取得できません（${e.message}）。サーバー復帰を待って再試行 ${attempt + 1}/${retries}…`);
+        await sleep(waitMs);
+        continue;
+      }
+      log(`⚠ studyLog を取得できません（dev サーバは起動中？ ${studyLogApi}）: ${e.message}`);
+      log("  既知判定ができないため、全問が「未知」として報告されます。");
+      return new Map();
+    }
   }
+  return new Map();
 }
 
 // 回答後フィードバックの緑枠 rgb(22,163,74) が付いた選択肢テキストを「正解」として読む（自己訂正用）。

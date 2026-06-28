@@ -67,6 +67,35 @@ const NO_REVIEW = process.env.NO_REVIEW === "1";
 // 既に取り込み済みのレッスンで「復習クリア＝自己訂正」だけを AI再課金なしで再検証する replay 用。
 const NO_IMPORT = process.env.NO_IMPORT === "1";
 
+// --- 保存POSTの保険（②）---
+// サーバーが一時的に落ちても1問も失わないため、保存POSTは fetch失敗/5xx の間は待って再試行する。
+// それでも復帰しなければ「黙って次の問題へ進む」のではなく throw して確実に停止する
+// （前回の事故＝保存0問のまま巡回→復習で全問未知、を二度と起こさない）。本物の 4xx は入力起因なので即返す。
+const POST_RETRIES = parseInt(process.env.POST_RETRIES ?? "30", 10);
+const POST_RETRY_WAIT = parseInt(process.env.POST_RETRY_WAIT ?? "5000", 10);
+
+async function postQuestionWithRetry(payload) {
+  let lastErr = "";
+  for (let attempt = 0; attempt <= POST_RETRIES; attempt++) {
+    try {
+      const res = await fetch(API, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) return { ok: true, json: await res.json() };
+      if (res.status < 500) return { ok: false, status: res.status, text: await res.text() }; // 4xx=入力起因→再試行しない
+      lastErr = `HTTP ${res.status}`;
+      console.log(`  ⚠ 保存に一時失敗 (${lastErr})。サーバー復帰を待って再試行 ${attempt + 1}/${POST_RETRIES}…`);
+    } catch (e) {
+      lastErr = e.message;
+      console.log(`  ⚠ サーバーに接続できません（${lastErr}）。復帰を待って再試行 ${attempt + 1}/${POST_RETRIES}…`);
+    }
+    if (attempt < POST_RETRIES) await sleep(POST_RETRY_WAIT);
+  }
+  throw new Error(`保存POSTが${POST_RETRIES}回再試行しても回復しません（${lastErr}）。サーバーダウンのまま=ここで停止します（データ消失/全問未知を防止）。`);
+}
+
 const ctx = await chromium.launchPersistentContext(PROFILE_DIR, {
   headless: false,
   viewport: { width: 430, height: 900 },
@@ -295,32 +324,24 @@ async function importLesson({ series, course, lesson }) {
       if (NO_IMPORT) {
         console.log(`  (NO_IMPORT: ${s.qnum} は保存スキップ＝復習トリガーのみ・AI再課金なし)`);
       } else {
-      try {
-        const res = await fetch(API, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            series, course, lesson,
-            kind,
-            questionInfo: s.qnum,
-            questionText: s.questionText,
-            options: s.options,
-            rightItems: s.isMatching ? s.rightItems : undefined,
-            // cloze は単一正解でない（緑枠は1空欄ぶんしか示さず誤誘導）→ correctAnswer は送らない。
-            // 正解シーケンスは公式解説（drillExplanation）から復習時に導く。
-            correctAnswer: s.isCloze ? undefined : (a.correctAnswer ?? undefined),
-            drillExplanation: a.explanation,
-          }),
-        });
-        if (res.ok) {
-          const j = await res.json();
-          imported += 1;
-          console.log(`  ✓ 保存: ${j.questionInfo}  keyLearning「${(j.keyLearning || "").slice(0, 30)}…」`);
-        } else {
-          console.log(`  ✗ 保存失敗 (${res.status}): ${(await res.text()).slice(0, 120)}`);
-        }
-      } catch (e) {
-        console.log(`  ✗ APIに接続できません（dev サーバは起動中？）: ${e.message}`);
+      // postQuestionWithRetry: fetch失敗/5xx は復帰を待って再試行。回復しなければ throw で全体停止。
+      const r = await postQuestionWithRetry({
+        series, course, lesson,
+        kind,
+        questionInfo: s.qnum,
+        questionText: s.questionText,
+        options: s.options,
+        rightItems: s.isMatching ? s.rightItems : undefined,
+        // cloze は単一正解でない（緑枠は1空欄ぶんしか示さず誤誘導）→ correctAnswer は送らない。
+        // 正解シーケンスは公式解説（drillExplanation）から復習時に導く。
+        correctAnswer: s.isCloze ? undefined : (a.correctAnswer ?? undefined),
+        drillExplanation: a.explanation,
+      });
+      if (r.ok) {
+        imported += 1;
+        console.log(`  ✓ 保存: ${r.json.questionInfo}  keyLearning「${(r.json.keyLearning || "").slice(0, 30)}…」`);
+      } else {
+        console.log(`  ✗ 保存失敗 (${r.status}): ${(r.text || "").slice(0, 120)}`);
       }
       } // end NO_IMPORT
     }

@@ -17,7 +17,7 @@ export function buildDiagramHtml(opts: {
   content: string; // AIが生成した <main> 内の本文HTML
 }): string {
   const title = escapeHtml(opts.title);
-  const description = escapeHtml(opts.description);
+  // 注: description は呼び出し側が渡すが、現在この額縁では本文に差し込んでいない（未使用）。
   return `<!DOCTYPE html>
 <html lang="ja">
 <head>
