@@ -153,6 +153,50 @@ export function bestOverlapIndex(cands, target, used = []) {
   return bestScore > 0 && bestScore > second ? best : -1;
 }
 
+// targets（保存の左/右ラベル列）を cands（実ドリルのセル列）へ 1対1 で割り当てる（消去法・制約伝播）。
+// 線結びは右セルが曖昧（例 右=[最大要素の表示時間, 表示のガタつき, 操作への反応時間] は全部「表示」を含む）で、
+// 略語ヒント（保存「表示速度」）が findLoose でも bestOverlapIndex 単発でも同点タイで取れないことがある。
+// → ①まず findLoose で確実に取れる一意対応を確定、②残りは「いまの未使用セルの中で一意に最良」な
+//   target を見つけて確定…を進展が止まるまで反復。他が先にセルを取ると残りが一意化して解ける
+//   （実例: ガタつき→FID/CLS が先に確定→残った1セルへ「表示速度」が一意に決まる）。曖昧で詰まった
+//   target は -1 のまま（誤接続せず呼び出し側が機械接続へ退避）。返り値は target 順の cand index 配列。
+export function resolveWithElimination(cands, targets) {
+  const result = new Array(targets.length).fill(-1);
+  const usedCand = new Set();
+  // ① findLoose（包含/完全一致）で確実に取れる対応を先に確定（未使用セルのみ採用）。
+  for (let i = 0; i < targets.length; i++) {
+    const idx = findLoose(cands, targets[i]);
+    if (idx !== -1 && !usedCand.has(idx)) { result[i] = idx; usedCand.add(idx); }
+  }
+  // ② 残りはトークン重なりで「いま一意に最良」のものだけ確定→使用済みを除外して再走査、を反復。
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (let i = 0; i < targets.length; i++) {
+      if (result[i] !== -1) continue;
+      const ci = bestOverlapIndex(cands, targets[i], [...usedCand]);
+      if (ci !== -1) { result[i] = ci; usedCand.add(ci); progress = true; }
+    }
+  }
+  return result;
+}
+
+// 保存解説の pairs（{left,right}）を、実ドリルの左 options / 右 rightItems の index 対応へ解決する。
+// 左右とも resolveWithElimination（findLoose→トークン重なりの消去法）で 1対1 に割り当て、
+// 全 pair を解決できたときだけ接続プラン [左option index, 右ラベル] を返す。1つでも詰まれば null
+// （呼び出し側が機械接続へ退避）。左の全項目を接続できることを要件にする（[[matching-import-is-1to1-positional]]）。
+export function assignMatchingPairs(options, rightItems, pairs) {
+  if (!pairs?.length || !options?.length || !rightItems?.length) return null;
+  const lefts = resolveWithElimination(options, pairs.map((p) => p.left));
+  const rights = resolveWithElimination(rightItems, pairs.map((p) => p.right));
+  const plan = [];
+  for (let i = 0; i < pairs.length; i++) {
+    if (lefts[i] === -1 || rights[i] === -1) return null;
+    plan.push([lefts[i], rightItems[rights[i]]]);
+  }
+  return plan.length === options.length ? plan : null;
+}
+
 // 「### 正しい順序」/「## 正しい順序」の番号付きリスト → 手順テキスト配列（順序どおり）。
 export function extractOrder(expl) {
   if (!expl) return [];
@@ -735,22 +779,15 @@ export async function answerChoice(page, { correctText = null, index = 0, log = 
 // 各ペアは表示の左選択肢・右項目へゆるく照合（読み仮名差を吸収）。pairs 無しは左[i]→右[i]。
 export async function answerMatching(page, s, pairs = []) {
   // 接続する [左option index, 右項目テキスト] の列を決める。
-  let plan;
-  if (pairs.length) {
-    plan = [];
-    for (const p of pairs) {
-      const li = findLoose(s.options, p.left);
-      const ri = findLoose(s.rightItems, p.right);
-      if (li !== -1 && ri !== -1) plan.push([li, s.rightItems[ri]]);
-    }
-    // ⚠ 線結びは「左の全項目」を接続する必要がある（右が少ない多対1＝3左→2右等でも左は全部繋ぐ）。
-    //   旧コードは閾値を min(左,右) にしていたため、3左→2右で plan=3 が「3/2のみ」と誤判定され、
-    //   正しい対応を捨てて機械接続（不正解）へ退避→復習を突破できず停止していた
-    //   （HTML構造マスター Lesson3 Q7 「body直下の要素間の関係（兄弟/親子）」で実証）。
-    if (plan.length !== s.options.length) {
-      console.log(`     ⚠ 対応づけ ${plan.length}/${s.options.length} のみ → 機械接続に退避`);
-      plan = null;
-    }
+  // ⚠ 旧コードは左右とも findLoose のみ。品質とデプロイ L3 Q7（Core Web Vitals）で実証した真因＝
+  //   保存「正しい対応」の左が「LCP（Largest Contentful Paint）」のように略語(3字)＋丸括弧の正式名注記で、
+  //   実ライブ左セルは「LCP」(3字)。findLoose は <4字ガードと括弧除去後の長さ<4 で 3字略語を弾き左が全滅→
+  //   「⚠ 対応づけ 0/3 → 機械接続」で位置接続→不正解→6回停止していた。
+  //   → 並べ替えと同様 bestOverlapIndex（"lcp" 等のトークン一致）を左右の照合フォールバックに足し、
+  //   消去法（resolveWithElimination）で 1対1 割当する（[[review-selfcorrect-from-feedback]] の線結び残課題）。
+  let plan = pairs.length ? assignMatchingPairs(s.options, s.rightItems, pairs) : null;
+  if (pairs.length && !plan) {
+    console.log(`     ⚠ 対応づけできず（${pairs.length}ペアを左右に割当不能）→ 機械接続に退避`);
   }
   if (!plan) {
     // 機械接続（対応不明時の最終手段）: 左の全項目を接続。右が少ない多対1では右をサイクル割当て。
