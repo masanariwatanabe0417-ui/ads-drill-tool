@@ -99,10 +99,22 @@ export async function readState(page) {
       if (qnum && total) break;
     }
 
-    // 問題文: 設問エリアの最長テキスト（選択肢・指示文・ナビ等を除外）
+    // 問題文: 設問エリアの最長テキスト（選択肢・指示文・ナビ等を除外）。
+    // ⚠ フィナーレ（最終レッスン）には固定バナー「…（The Finale）」が常駐し、これが本物の問題文より
+    //   長いと「最長テキスト」ヒューリスティックで questionText に化けて lookup/sig が外れる
+    //   （実ライブで ○✕↔4択 が同一 sig になり訂正が誤適用、復習で Q2/Q3 が一旦「未知」化した）。
+    //   バナーは永続ナビ/ヘッダー側のサブツリーに在り、選択肢コンテナとは深い祖先でしか共通祖先を
+    //   持たない。→ 走査の起点を「選択肢コンテナの祖先（＝設問本体スコープ）」に絞ってナビ/バナーを
+    //   除外する。実測（drill-dump 多数）: 正規の問題文は選択肢コンテナの 5 段以内、バナー/ナビは
+    //   10 段目で初めて同一サブツリーに入る。8 段上れば両側にマージンがあり、非フィナーレ問題（選択/
+    //   並べ替え/線結び/穴埋め/○✕）の questionText は従来と完全一致する（37 ダンプで回帰なし確認）。
     const optionTexts = new Set(options);
+    let qScope = optEls[0] || null;
+    while (qScope && !optEls.every((o) => qScope.contains(o))) qScope = qScope.parentElement;
+    if (qScope) for (let k = 0; k < 8 && qScope.parentElement; k++) qScope = qScope.parentElement;
+    const qRoot = qScope || document; // 選択肢が無い画面（フィードバックのみ等）は従来どおり document 全体
     let questionText = "";
-    for (const el of document.querySelectorAll('div[dir="auto"]')) {
+    for (const el of qRoot.querySelectorAll('div[dir="auto"]')) {
       // 子に dir=auto を含む（=コンテナ）は除外し、葉テキストだけ見る
       if (el.querySelector('div[dir="auto"]')) continue;
       const t = norm(el.textContent);
