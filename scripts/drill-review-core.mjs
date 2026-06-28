@@ -141,14 +141,30 @@ export function extractPairs(expl) {
 // 期待数（blankCount）に満たない/曖昧なときは空配列＝未知扱い（report）にフォールバック。
 export function extractClozeSequence(expl, options, blankCount) {
   if (!expl || !options?.length || !blankCount) return [];
-  const hay = normLoose(expl);
-  const found = options
-    .map((o) => ({ o, i: hay.indexOf(normLoose(o)) }))
-    .filter((x) => x.i >= 0)
-    .sort((a, b) => a.i - b.i);
-  // 同点（同じ位置）や重複語は曖昧 → 安全側で空配列
-  const seq = [];
-  for (const x of found) { if (!seq.includes(x.o)) seq.push(x.o); }
+  const tryOn = (body) => {
+    const hay = normLoose(body);
+    const found = options
+      .map((o) => ({ o, i: hay.indexOf(normLoose(o)) }))
+      .filter((x) => x.i >= 0)
+      .sort((a, b) => a.i - b.i);
+    // 同点（同じ位置）や重複語は曖昧 → 出現順に一意化
+    const seq = [];
+    for (const x of found) if (!seq.includes(x.o)) seq.push(x.o);
+    return seq;
+  };
+  // ⚠ 解説の冒頭には buildAnswerBlock の「選択肢: - A - B …」列挙があり、語が“列挙順”に並ぶ。
+  // これを走査すると列挙順を答え順と誤認する（実ライブ Lesson8 Q10 で『ブラウザ→インターネット』と
+  // 誤導出＝正解は『ブラウザ→サーバー』）。→ まず選択肢列挙ブロックを常に除去し、その上で『## 解説』
+  // 以降かつ『間違い選択肢』より前（＝正解理由の本文）だけで出現順を引く（誤答語は除外される）。
+  const noList = expl.replace(/選択肢[:：]\s*(?:\n\s*[-*・].*)+/g, "");
+  let primary = noList;
+  const di = noList.search(/##\s*解説/);
+  if (di >= 0) primary = noList.slice(di);
+  const wi = primary.search(/間違い選択肢|どこが違う/);
+  if (wi > 0) primary = primary.slice(0, wi);
+  let seq = tryOn(primary);
+  // フォールバック: 正解理由の本文だけでは空欄数に満たない場合、選択肢列挙を除いた全文で再走査。
+  if (seq.length < blankCount) seq = tryOn(noList);
   return seq.length >= blankCount ? seq.slice(0, blankCount) : [];
 }
 

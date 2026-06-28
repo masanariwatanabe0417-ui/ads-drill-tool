@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -90,6 +90,38 @@ t("括弧を外すと同一になる紛らわしい候補は曖昧として-1（
 });
 t("無関係な語は-1のまま", () => {
   assert.equal(findLoose(orderDisplayed, "まったく別の文章です"), -1);
+});
+
+console.log("extractClozeSequence: 解説冒頭の『選択肢:』列挙に惑わされず正解順を引く");
+// 実ライブ(Lesson8 Q10 穴埋め×2)の保存解説。冒頭の選択肢列挙は ブラウザ→インターネット→… の順で、
+// 全文走査だと先頭2語=[ブラウザ,インターネット]を誤って拾う。正解は本文の出現順=[ブラウザ,サーバー]。
+const clozeExpl = `## 問題
+＿＿＿ がURL（住所）をもとに ＿＿＿ にリクエスト（注文）を送り、届いたデータを画面に組み立てる仕組み
+
+## 回答
+選択問題です。正解は下の「解説」を参照してください。
+
+選択肢:
+- ブラウザ
+- インターネット
+- クライアント
+- サーバー
+
+## 解説
+### なぜこれが正解？
+Webの仕組みをシンプルに考えると「ユーザーが見ている画面=ブラウザ」が主役です。ブラウザがアドレスバーのURLを読み込んで、その住所先にいるサーバーに「このデータをください」と頼みを出す—これがリクエストです。空欄には「ブラウザ」と「サーバー」が入ります。
+
+### 間違い選択肢のどこが違う？
+- **インターネット**：インターネットは「通信の道路」に過ぎず、リクエストを送る主体ではありません。
+- **クライアント**：これはブラウザより範囲が広すぎるのでNG。`;
+const clozeOpts = ["ブラウザ", "インターネット", "クライアント", "サーバー"];
+t("Lesson8 Q10 の正解順=[ブラウザ,サーバー]を引く（列挙順[ブラウザ,インターネット]に惑わされない）", () => {
+  assert.deepEqual(extractClozeSequence(clozeExpl, clozeOpts, 2), ["ブラウザ", "サーバー"]);
+});
+t("解説本文だけでは足りない時は選択肢列挙を除いた全文へフォールバック", () => {
+  // 「## 解説」も「間違い選択肢」も無い素朴な解説でも、選択肢列挙は除いて本文順で引ける。
+  const e = `## 問題\n＿ と ＿\n選択肢:\n- 甲\n- 乙\n本文では 乙 が先、その後 甲 が出ます。`;
+  assert.deepEqual(extractClozeSequence(e, ["甲", "乙"], 2), ["乙", "甲"]);
 });
 
 console.log(`\n✅ 全 ${pass} 件パス`);
