@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap, Library, Pencil } from "lucide-react";
 import { StudyLog, TeacherView } from "@/lib/types";
+import { COURSE_ORDER, courseNumber } from "@/lib/courseOrder";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -19,7 +20,8 @@ type EditTarget = { courseKey: string; lessonName: string; oldQ: string };
 
 export default function NavigationPane({ studyLog, teacherView, onSelectView, onRenameQuestion }: NavigationPaneProps) {
   // コースをシリーズ単位でまとめる（同一シリーズ名の複数コースを1つの見出しに束ねる）。
-  // 出現順は studyLog.courses の順を保ち、各シリーズ内のコース順も元の順を保つ。
+  // 並び順は正本 lib/courseOrder.ts（実際のドリルの順番）に合わせる。
+  // 表に無いシリーズ／コースは出現順のまま末尾へ回す（取り込み直後でも消えないように）。
   const seriesGroups = useMemo(() => {
     const order: string[] = [];
     const map = new Map<string, typeof studyLog.courses>();
@@ -28,7 +30,25 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
       if (!map.has(s)) { map.set(s, []); order.push(s); }
       map.get(s)!.push(course);
     }
-    return order.map((seriesName) => ({ seriesName, courses: map.get(seriesName)! }));
+    // シリーズの並び：courseOrder.ts のキー順を正とし、未登録は出現順で末尾。
+    const seriesRank = new Map(Object.keys(COURSE_ORDER).map((s, i) => [s, i]));
+    const seriesOrder = [...order].sort((a, b) => {
+      const ra = seriesRank.get(a) ?? Infinity;
+      const rb = seriesRank.get(b) ?? Infinity;
+      if (ra !== rb) return ra - rb;
+      return order.indexOf(a) - order.indexOf(b);
+    });
+    return seriesOrder.map((seriesName) => {
+      const courses = [...map.get(seriesName)!];
+      // コースの並び：courseNumber() を正とし、未登録(null)は出現順で末尾。
+      courses.sort((a, b) => {
+        const na = courseNumber(seriesName, a.courseName) ?? Infinity;
+        const nb = courseNumber(seriesName, b.courseName) ?? Infinity;
+        if (na !== nb) return na - nb;
+        return 0;
+      });
+      return { seriesName, courses };
+    });
   }, [studyLog.courses]);
 
   // シリーズは既定で展開（コースが見える状態）にしたいので「閉じているもの」を集合で持つ。
