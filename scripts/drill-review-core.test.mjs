@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -167,6 +167,42 @@ const enumOpts = ["content", "margin", "border", "padding"];
 t("構造的な列挙引用に引きずられず本文順（padding先頭）を返す", () => {
   // bc=1: 引用は4語>1 → 捨てて本文「paddingが正解です」順 → [padding]（列挙の content ではない）。
   assert.deepEqual(extractClozeSequence(clozeEnumExpl, enumOpts, 1), ["padding"]);
+});
+
+// 実ライブ(ビルドとモダンCSS Lesson5 Q6 穴埋め×2)の保存解説。正解理由の積み上げ説明に誤答語「PC」が
+// 先に登場し（「段階的にPC向けのスタイルを追加していく」）、裸の出現順走査だと [PC,スマホ] と誤導出して
+// いた（6回失敗で復習が止まり L6 以降を取りこぼした真因）。結論文「つまり、スマホ用が基本で、md:やlg:で
+// …が正解です」だけ見れば正解 [スマホ, md: や lg:] が引ける。
+const clozeExplTailwind = `## 問題
+Tailwind は ＿＿＿ 用のスタイルが基本で、 ＿＿＿ で大画面向けを追加する設計。
+
+## 回答
+選択問題です。正解は下の「解説」を参照してください。
+
+選択肢:
+- sm: や xs:
+- スマホ
+- PC
+- md: や lg:
+
+## 解説
+### なぜこれが正解？
+Tailwindの設計哲学は「小さい画面から始める」という考え方です。何もプレフィックス（接頭辞）をつけないクラス名は、スマートフォンのような小さい画面で最初に適用されます。その上で、画面が大きくなるにつれて「md:（768px以上）」や「lg:（1024px以上）」といったプレフィックス（接頭辞）をつけたクラスで、段階的にPC向けのスタイルを追加していく設計になっています。つまり、スマホ用が基本で、md:やlg:で大画面向けを追加するというのが正解です。
+
+### 間違い選択肢のどこが違う？
+**sm:やxs:**：これらは実は超小さい画面用です。
+**スマホ：** 前半の空欄の答えとしては正しいです。
+**PC：** スマホではなくPCが基本という逆の考え方でNGです。`;
+const clozeOptsTailwind = ["sm: や xs:", "スマホ", "PC", "md: や lg:"];
+t("Tailwind L5 Q6 の正解順=[スマホ, md: や lg:]を引く（積み上げ説明の誤答語『PC』に惑わされない）", () => {
+  assert.deepEqual(extractClozeSequence(clozeExplTailwind, clozeOptsTailwind, 2), ["スマホ", "md: や lg:"]);
+});
+
+// readCorrectFromFeedback の自己訂正フォールバック相当: 実フィードバック本文（緑枠なし）から正解順を引く。
+const tailwindFeedbackText =
+  "不正解... マスターのワンポイント Tailwind は スマホ用が基本 で、 md: や lg: で大画面向けを追加 するモバイルファースト設計です。 プレフィックスなしのクラスがスマホに適用され、md: は768px以上、lg: は1024px以上で適用されます。 次の問題へ";
+t("フィードバック本文（緑枠なし）から穴埋め正解順=[スマホ, md: や lg:]を読める", () => {
+  assert.deepEqual(orderedOptionsInText(tailwindFeedbackText, clozeOptsTailwind), ["スマホ", "md: や lg:"]);
 });
 
 // === 並べ替え自己訂正（フィードバックの「A→B→C の順です」を読み、略語→フル選択肢に対応づける）===

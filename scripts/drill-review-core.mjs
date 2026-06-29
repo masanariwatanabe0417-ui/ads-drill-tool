@@ -218,23 +218,26 @@ export function extractPairs(expl) {
   return pairs;
 }
 
+// テキスト hay の中で各選択肢語の“最初の出現位置”順に並べ、重複を除いて一意化して返す（cloze 基本走査）。
+export function orderedOptionsInText(hay, options) {
+  const h = normLoose(hay);
+  const found = (options || [])
+    .map((o) => ({ o, i: h.indexOf(normLoose(o)) }))
+    .filter((x) => x.i >= 0)
+    .sort((a, b) => a.i - b.i);
+  // 同点（同じ位置）や重複語は曖昧 → 出現順に一意化
+  const seq = [];
+  for (const x of found) if (!seq.includes(x.o)) seq.push(x.o);
+  return seq;
+}
+
 // cloze（複数空欄穴埋め）の正解シーケンスを解説本文から導く。
 // 空欄は本文の順にタップ語で埋める（実機観察済み）。公式/保存解説は答えの語を空欄順で言及するため
 // （例「pnpm が…その pnpm 自体は Node.js…」）、各選択肢語の“最初の出現位置”で並べ替えて blankCount 個返す。
 // 期待数（blankCount）に満たない/曖昧なときは空配列＝未知扱い（report）にフォールバック。
 export function extractClozeSequence(expl, options, blankCount) {
   if (!expl || !options?.length || !blankCount) return [];
-  const tryOn = (body) => {
-    const hay = normLoose(body);
-    const found = options
-      .map((o) => ({ o, i: hay.indexOf(normLoose(o)) }))
-      .filter((x) => x.i >= 0)
-      .sort((a, b) => a.i - b.i);
-    // 同点（同じ位置）や重複語は曖昧 → 出現順に一意化
-    const seq = [];
-    for (const x of found) if (!seq.includes(x.o)) seq.push(x.o);
-    return seq;
-  };
+  const tryOn = (body) => orderedOptionsInText(body, options);
   // ⚠ 解説の冒頭には buildAnswerBlock の「選択肢: - A - B …」列挙があり、語が“列挙順”に並ぶ。
   // これを走査すると列挙順を答え順と誤認する（実ライブ Lesson8 Q10 で『ブラウザ→インターネット』と
   // 誤導出＝正解は『ブラウザ→サーバー』）。→ まず選択肢列挙ブロックを常に除去し、その上で『## 解説』
@@ -245,6 +248,17 @@ export function extractClozeSequence(expl, options, blankCount) {
   if (di >= 0) primary = noList.slice(di);
   const wi = primary.search(/間違い選択肢|どこが違う/);
   if (wi > 0) primary = primary.slice(0, wi);
+  // ⚠ 最優先: 正解理由本文の“結論文”（正解/つまり/空欄に…が入る 等）だけを走査する。
+  // 正解理由の本文は結論の前に積み上げ説明があり、そこに誤答語(distractor)が登場して出現順を汚す
+  // （実ライブ Tailwind L5 Q6＝本文に『PC向けのスタイルを追加していく』が先に出て [PC,スマホ] と誤導出。
+  // だが結論文『つまり、スマホ用が基本で、md:やlg:で大画面向けを追加するというのが正解』だけ見れば
+  // [スマホ, md:やlg:] が正しく引ける）。結論文で“ちょうど blankCount 個”取れた時だけ最優先で採用する。
+  const conclusion = primary
+    .split(/[。\n！？]/)
+    .filter((sent) => /正解|つまり|したがって|空欄|が入(り|る)|答えは|になります/.test(sent))
+    .join("　");
+  const seqConcl = conclusion ? tryOn(conclusion) : [];
+  if (seqConcl.length === blankCount) return seqConcl.slice(0, blankCount);
   // ⚠ 最優先: 正解理由本文の「…」『…』で“強調された”語句だけを走査する。
   // 裸の indexOf は短い選択肢語が地の文の複合語に部分一致して誤順になる（実ライブ CSS L5 Q5＝
   // 選択肢「要素」が「インライン要素」に最速一致し [要素,中身] と誤導出。正解は [中身,横]）。
@@ -382,7 +396,23 @@ export async function readCorrectFromFeedback(page, s) {
         .filter(Boolean);
     })
     .catch(() => []);
-  if (!greens.length) return null;
+  if (!greens.length) {
+    // この UI の穴埋めフィードバックは正解を緑で示さない（実機: 緑 rgb(22,163,74) は未使用CSSのみ）。
+    // 正解は「マスターのワンポイント」本文に記述される（例「Tailwind は スマホ用が基本 で、md: や lg:
+    // で大画面向けを追加 する…」）。→ フィードバック本文から正解語の出現順を読み、自己訂正シーケンスに
+    // する。ちょうど空欄数ぶん取れた時だけ採用（過不足は誤学習を避けて null）。
+    if (s.isCloze && s.clozeBlanks > 0 && s.options?.length) {
+      const fbText = await page
+        .evaluate(() => {
+          const el = document.querySelector('[data-testid="quiz-feedback"]');
+          return el ? el.innerText || el.textContent || "" : "";
+        })
+        .catch(() => "");
+      const seq = orderedOptionsInText(fbText, s.options);
+      if (seq.length === s.clozeBlanks) return { seq };
+    }
+    return null;
+  }
   return s.isCloze ? { seq: greens } : { text: greens[0] };
 }
 
