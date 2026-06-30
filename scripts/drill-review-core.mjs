@@ -230,14 +230,59 @@ export function extractPairs(expl) {
 // テキスト hay の中で各選択肢語の“最初の出現位置”順に並べ、重複を除いて一意化して返す（cloze 基本走査）。
 export function orderedOptionsInText(hay, options) {
   const h = normLoose(hay);
+  // 選択肢語の出現位置。フル形（normLoose）で取れなければ、括弧注記を剥がした素の語でも探す。
+  // ⚠ normLoose は“かな注記”の括弧しか剥がさない（例「（送信）」は漢字＝残る）。選択肢は
+  // 「コミット（記録）」「アップロード（送信）」のように漢字注記付きで保存される一方、正解理由の
+  // 本文は「コミット」とだけ書くため、フル形では全滅し先頭選択肢へ誤フォールバックしていた
+  // （実ライブ Git概念マスター L2「記録する操作の名前」＝正解コミットを取り違え6回停止）。
+  const idxOf = (o) => {
+    const full = normLoose(o);
+    let i = full ? h.indexOf(full) : -1;
+    if (i >= 0) return i;
+    const bare = stripParens(full);
+    // 素の語は短すぎる部分一致を避けるため2字以上に限定（フル形と異なる時のみ試す）。
+    if (bare && bare.length >= 2 && bare !== full) {
+      i = h.indexOf(bare);
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
   const found = (options || [])
-    .map((o) => ({ o, i: h.indexOf(normLoose(o)) }))
+    .map((o) => ({ o, i: idxOf(o) }))
     .filter((x) => x.i >= 0)
     .sort((a, b) => a.i - b.i);
   // 同点（同じ位置）や重複語は曖昧 → 出現順に一意化
   const seq = [];
   for (const x of found) if (!seq.includes(x.o)) seq.push(x.o);
   return seq;
+}
+
+// 単一空欄向け: テキスト hay での出現回数が最多の選択肢を返す（同数なら最先頭・無ければ null）。
+// 正解理由の本文は“正解語”を主語に繰り返し説明する一方、誤答語は説明の都合で先に1回だけ出ることが
+// ある。「最初の出現位置」だと誤答語を拾う（実ライブ Git概念マスター L4 Q5＝本文が
+// 『ブランチは…そこで作った変更を本流に取り込みたいときに使うのがマージです』で誤答ブランチが先頭に
+// 出るが、正解マージは2回出る）。頻度で見ると正解語が勝つので単一空欄の最終手段として頑健。
+export function topOptionByFrequency(hay, options) {
+  const h = normLoose(hay);
+  const matchForm = (o) => {
+    const full = normLoose(o);
+    if (full && h.includes(full)) return full;
+    const bare = stripParens(full);
+    if (bare && bare.length >= 2 && bare !== full && h.includes(bare)) return bare;
+    return null;
+  };
+  let best = null;
+  for (const o of options || []) {
+    const form = matchForm(o);
+    if (!form) continue;
+    const count = h.split(form).length - 1;
+    if (count <= 0) continue;
+    const first = h.indexOf(form);
+    if (!best || count > best.count || (count === best.count && first < best.first)) {
+      best = { o, count, first };
+    }
+  }
+  return best ? best.o : null;
 }
 
 // cloze（複数空欄穴埋め）の正解シーケンスを解説本文から導く。
@@ -278,6 +323,12 @@ export function extractClozeSequence(expl, options, blankCount) {
   // ガード: 引用句が選択肢を blankCount より多く含む＝答えの強調でなく“構造的な列挙”（例 CSS L4 Q5
   // 「content→padding→border→margin」）であり、列挙順を答え順と誤認する。→ 引用句を捨て本文へ。
   if (seq.length > blankCount) seq = [];
+  // 単一空欄の最終手段: 正解理由本文での“出現頻度が最多”の語を採る（最初の出現位置だと誤答語を
+  // 拾う実ライブ Git L4 Q5 を救う）。複数空欄は順序が要るので頻度は使わず従来の出現順のまま。
+  if (seq.length < blankCount && blankCount === 1) {
+    const top = topOptionByFrequency(primary, options);
+    if (top) return [top];
+  }
   // フォールバック: 引用句で足りなければ正解理由の本文全体 → 選択肢列挙を除いた全文の順で再走査。
   if (seq.length < blankCount) seq = tryOn(primary);
   if (seq.length < blankCount) seq = tryOn(noList);
@@ -417,8 +468,21 @@ export async function readCorrectFromFeedback(page, s) {
           return el ? el.innerText || el.textContent || "" : "";
         })
         .catch(() => "");
-      const seq = orderedOptionsInText(fbText, s.options);
-      if (seq.length === s.clozeBlanks) return { seq };
+      // 正解は「ワンポイント/正解は/正しくは」以降に書かれる。前半（不正解・誤って埋めた語等）を
+      // 落としてその後ろだけを見る（誤答語の混入を避ける）。
+      const seg = (fbText.split(/ワンポイント|正しくは|正解は/).pop() || fbText).trim();
+      if (s.clozeBlanks === 1) {
+        // ⚠ ワンポイント本文には正解語のほか付随的に誤答語も出る（実ライブ Git L4 Q5＝正解『マージ』の
+        // 説明文に『全てのコミットが保存された』と誤答コミットが混ざる）。従来は orderedOptionsInText が
+        // 2語返し『=== clozeBlanks(1)』で弾かれ自己訂正できず6回停止していた。単一空欄は“出現頻度最多
+        // （同数は最先頭）”の語を正解として採る＝付随語に負けない。
+        const top = topOptionByFrequency(seg, s.options) || orderedOptionsInText(seg, s.options)[0];
+        if (top) return { seq: [top] };
+      } else {
+        // 複数空欄は順序が要るので、ちょうど空欄数ぶん取れた時だけ採用（過不足は誤学習回避で null）。
+        const seq = orderedOptionsInText(seg, s.options);
+        if (seq.length === s.clozeBlanks) return { seq };
+      }
     }
     return null;
   }

@@ -53,3 +53,7 @@ scripts/_dump_archive_prev/
 scripts/.import-run.log
 scripts/.review-run.log
 scripts/.prod-serve.log
+
+# 取込/本番サーバーの実行ログ（ローカルのみ）
+.import-run.log
+.prod-serve.log

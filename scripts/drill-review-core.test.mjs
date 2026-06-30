@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, topOptionByFrequency, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -196,6 +196,72 @@ Tailwindの設計哲学は「小さい画面から始める」という考え方
 const clozeOptsTailwind = ["sm: や xs:", "スマホ", "PC", "md: や lg:"];
 t("Tailwind L5 Q6 の正解順=[スマホ, md: や lg:]を引く（積み上げ説明の誤答語『PC』に惑わされない）", () => {
   assert.deepEqual(extractClozeSequence(clozeExplTailwind, clozeOptsTailwind, 2), ["スマホ", "md: や lg:"]);
+});
+
+// 実ライブ(2026-06-30 Git概念マスター L2「タイムマシン機能」Q6)の保存解説。選択肢が漢字注記付き
+// （「コミット（記録）」等）で、正解理由の本文は素の語「コミット」とだけ書く。normLoose は漢字注記を
+// 剥がさないため従来はフル形が全滅→先頭「アップロード（送信）」に誤フォールバックし6回停止していた。
+const clozeExplGit = `## 問題
+Gitでファイルの状態を「セーブポイント」として記録する操作には、専用の名前があります。
+
+## 回答
+選択問題です。正解は下の「解説」を参照してください。
+
+選択肢:
+- アップロード（送信）
+- バックアップ（複製）
+- コミット（記録）
+- インストール（導入）
+
+## 解説
+### なぜこれが正解？
+コミットは、ゲームでいうセーブポイントのように、その時点でのファイル変更を記録して保存する操作です。英語の「commit」には「確定する」という意味があります。
+
+### 間違い選択肢のどこが違う？
+**アップロード（送信）**：これはローカルのファイルをサーバーに送る操作であり、Gitの記録とは別の概念です。
+**バックアップ（複製）**：バックアップはファイル全体のコピーなので、変更の歴史が残りません。
+**インストール（導入）**：これはソフトウェアなどを環境に設定する操作で、Gitの操作とは全く関係ありません。`;
+const clozeOptsGit = ["アップロード（送信）", "バックアップ（複製）", "コミット（記録）", "インストール（導入）"];
+t("Git L2 Q6 の正解=[コミット（記録）]を引く（漢字注記『（記録）』を剥がした素の語で本文照合）", () => {
+  assert.deepEqual(extractClozeSequence(clozeExplGit, clozeOptsGit, 1), ["コミット（記録）"]);
+});
+
+// 実ライブ(2026-06-30 Git概念マスター L4「世界の合流（マージ）」Q5)の保存解説。理由本文が誤答語
+// 「ブランチ」を主語に書き出し正解「マージ」が後に来るため、最初の出現位置だと誤答ブランチを拾う。
+// 正解語は本文で繰り返される（マージ2回>ブランチ1回）ので頻度で正しく選べる。
+const clozeExplGitMerge = `## 問題
+ブランチ（パラレルワールド）の成果を本流に取り込んで1つにまとめる操作。この操作のGit用語は何でしょう？
+
+## 回答
+選択問題です。正解は下の「解説」を参照してください。
+
+選択肢:
+- コミット
+- ブランチ
+- マージ
+- プッシュ
+
+## 解説
+### なぜこれが正解？
+ブランチは別の作業環境のようなもので、そこで作った変更を本流に取り込みたいときに使うのがマージです。マージを使うことで、分岐した2つの道が1本の道に合流するイメージで統合できるんです。だから「分岐を本流に戻す」という説明にぴったり合致します。
+
+### 間違い選択肢のどこが違う？
+**コミット**：変更内容を記録する行為で、ブランチを統合する操作ではありません。
+**ブランチ**：逆に分岐を「作る」操作であって、統合ではなく分離の概念です。
+**プッシュ**：ローカルの変更をサーバーに送信する操作です。`;
+const clozeOptsGitMerge = ["コミット", "ブランチ", "マージ", "プッシュ"];
+t("Git L4 Q5 の正解=[マージ]を引く（誤答ブランチが本文先頭に出るが頻度で正解マージを選ぶ）", () => {
+  assert.deepEqual(extractClozeSequence(clozeExplGitMerge, clozeOptsGitMerge, 1), ["マージ"]);
+});
+
+// readCorrectFromFeedback の単一空欄・自己訂正フォールバック相当（実ライブ Git L4 Q5 の quiz-feedback）。
+// ワンポイント本文に正解『マージ』のほか付随語『コミット』が混ざる。従来は orderedOptionsInText が
+// 2語返し「=== clozeBlanks(1)」で弾かれ自己訂正できなかった。頻度最多（同数は最先頭）なら正解を選べる。
+const gitMergeFeedback =
+  "不正解... マスターのワンポイント マージ（Merge） は「合流」の意味です。2つの歴史を1つにまとめ、 全てのコミットが保存されたまま統合されます 。 次の問題へ";
+t("Git L4 Q5 のフィードバック（正解マージ＋付随語コミット）から単一空欄正解=マージを頻度で読む", () => {
+  const seg = (gitMergeFeedback.split(/ワンポイント|正しくは|正解は/).pop() || gitMergeFeedback).trim();
+  assert.equal(topOptionByFrequency(seg, clozeOptsGitMerge), "マージ");
 });
 
 // readCorrectFromFeedback の自己訂正フォールバック相当: 実フィードバック本文（緑枠なし）から正解順を引く。
