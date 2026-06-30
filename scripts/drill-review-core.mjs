@@ -187,12 +187,21 @@ export function resolveWithElimination(cands, targets) {
 // （呼び出し側が機械接続へ退避）。左の全項目を接続できることを要件にする（[[matching-import-is-1to1-positional]]）。
 export function assignMatchingPairs(options, rightItems, pairs) {
   if (!pairs?.length || !options?.length || !rightItems?.length) return null;
+  // 左は 1 対 1（各左セルは別の行）。消去法で割り当てる。
   const lefts = resolveWithElimination(options, pairs.map((p) => p.left));
-  const rights = resolveWithElimination(rightItems, pairs.map((p) => p.right));
+  // 右は「多対1」を許容する。例: レストラン分類（バックエンドの世界 L2 Q4）は 5 左 → 3 右で
+  //   『ホール』『厨房』が各2回・『連携』1回。pair 数ぶん右を 1対1 で取ろうとすると、重複ラベルの
+  //   2つ目以降が「未使用セル無し」で -1 になり assignMatchingPairs が null→機械接続→6回ループ停止していた。
+  // → 右ラベルを重複排除してから消去法で右セルへ 1対1 に確定し（曖昧な右セルの取り違えはこれで防ぐ）、
+  //   同じラベルの pair はすべて同じ右セルへ割り当てる（[[matching-import-is-1to1-positional]] の多対1拡張）。
+  const distinctRights = [...new Set(pairs.map((p) => p.right))];
+  const resolvedDistinct = resolveWithElimination(rightItems, distinctRights);
+  const labelToCand = new Map(distinctRights.map((lbl, k) => [lbl, resolvedDistinct[k]]));
   const plan = [];
   for (let i = 0; i < pairs.length; i++) {
-    if (lefts[i] === -1 || rights[i] === -1) return null;
-    plan.push([lefts[i], rightItems[rights[i]]]);
+    const ri = labelToCand.get(pairs[i].right);
+    if (lefts[i] === -1 || ri == null || ri === -1) return null;
+    plan.push([lefts[i], rightItems[ri]]);
   }
   return plan.length === options.length ? plan : null;
 }
@@ -609,8 +618,19 @@ export async function clearReview(page, index, opts = {}) {
     const advanceLabels = ["次の問題へ", "結果を見る", "結果へ", "スコアを見る", "次へ", "終了する", "終了", "完了する", "レッスンを終える"];
     let clicked = null;
     for (const lab of advanceLabels) {
-      const loc = page.getByText(lab, { exact: true });
-      if ((await loc.count().catch(() => 0)) > 0) { await loc.first().click().catch(() => {}); clicked = lab; break; }
+      const txt = page.getByText(lab, { exact: true });
+      if ((await txt.count().catch(() => 0)) === 0) continue;
+      // React Native Web: ラベルはテキストdiv（css-146c3p1）で、押せる実体は祖先の [tabindex="0"]
+      //   （r-1loqt21=touchable）。内側テキストへの通常クリックは、最終問の「正解！」フィードバック層に
+      //   覆われて遷移しないことがある（現代Web開発入門 L1 Q6=穴埋め最終問で「結果を見る」が効かず
+      //   quiz-answer-option が残存→同じQを6回再回答してループ停止を実証）。→ 祖先 touchable を
+      //   force クリックして覆いを貫く（[[next-course-tile-needs-force-click]] と同じ対策）。
+      const touch = txt.first().locator('xpath=ancestor-or-self::*[@tabindex="0"][1]');
+      if (!(await clickFirstVisible(touch, { force: true }))) {
+        await txt.first().click({ force: true }).catch(() => {});
+      }
+      clicked = lab;
+      break;
     }
     if (!clicked) {
       // どの遷移ボタンも見つからない＝既に完了画面 or 想定外。DOMをダンプして抜ける（診断用）。
