@@ -807,25 +807,46 @@ export const GIT_SERIES_FIRST_LESSONS = [
 ];
 
 // Git系1本道マップ専用の横断ナビ。
-// このシリーズは「コース完了画面/次のコースへ/STARTタイル/コース紹介」を持たず、全コース全レッスンが
-// 1枚の縦長マップに button[aria-label="○○（Lesson N）"]（解錠）/ [aria-label="○○（ロック中）"]（ロック）
-// として一度に描画される（スクロールはビューポート移動のみ・HTMLは不変＝step2-list 実データで確定）。
+// 全コース全レッスンが1枚の縦長マップに button[aria-label="○○（Lesson N）"]（解錠）/
+// [aria-label="○○（ロック中）"]（ロック）として一度に描画される（スクロールはビューポート移動のみ・
+// HTMLは不変＝step2-list 実データで確定）。
+// ★重要（2026-06-30c→d で訂正）: 最終レッスン完了直後は「レッスン完了!」オーバーレイが前面にあり、その裏に
+//   マップ（タイル）が DOM として残っている（step0-finale 実データで確認＝表示は「コース完了を見る/もう一度/
+//   ホームに戻る」）。よってタイルが DOM に居ても“覆われて”いて押せない。Git系も Web系と同じ2段階の完了フロー
+//   「コース完了を見る」→（次画面で）「次のコースへ」を踏んでオーバーレイを閉じてからマップが操作可能になる。
 // コース完了で次コースの L1 が解錠され「（Lesson 1）」ボタンになる。完了済みコースの L1 も同じボタンの
 // まま残るが、それらより必ず DOM 後方に出る＝最後尾の「（Lesson 1）」ボタンがフロンティア＝次コース L1。
 // nextLessonName を渡せば aria-label で厳密に特定する（ダブルレンダー対策＝より安全）。無ければ最後尾を使う。
 // 戻り値: 次コースの Q1（quiz-answer-option）を検出できたら true。
 async function tryGitMapAdvance(page, { log = console.log, nextLessonName = null } = {}) {
-  const mapPresent = async () =>
+  const dump = async (tag) => {
+    try { fs.writeFileSync(path.join(__dirname, `drill-dump.gitmap-${tag}.html`), await page.content(), "utf-8"); } catch {}
+    try { await page.screenshot({ path: path.join(__dirname, `drill-dump.gitmap-${tag}.png`), fullPage: true }); } catch {}
+  };
+  const q1Present = async () => !!(await page.$('[data-testid^="quiz-answer-option-"]'));
+  const tilesInDom = async () =>
     (await page.locator('button[aria-label*="（Lesson 1）"], [aria-label*="（ロック中）"]').count().catch(() => 0)) > 0;
-  // フィナーレ完了画面がマップを覆っている場合に備え、マップへ戻る/閉じる系を押してみる（無ければ無害）。
-  if (!(await mapPresent())) {
-    for (const t of ["マップに戻る", "マップへ", "ホームに戻る", "とじる", "閉じる", "完了", "つづける", "続ける", "次へ"]) {
+
+  // ① 完了オーバーレイを閉じてマップを前面に出す。「コース完了を見る」→ 次画面で「次のコースへ」の2段階
+  //    （いずれも tabindex=0／無ければ無害にスキップ）。各クリック後に Q1 が出たら（＝直接入った）即成功。
+  for (const t of ["コース完了を見る", "次のコースへ"]) {
+    if (await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: t }))) {
+      log(`  [Git横断] 完了フロー「${t}」をクリック…`);
+      await sleep(2500);
+      if (await q1Present()) { log("  [Git横断] ✅ 完了フロー直後に Q1 を検出。"); return true; }
+    }
+  }
+  await dump("after-complete");
+
+  // ② まだマップが見えない場合の保険（閉じる/戻る系・無ければ無害）。
+  if (!(await tilesInDom())) {
+    for (const t of ["マップに戻る", "マップへ", "ホームに戻る", "とじる", "閉じる", "つづける", "続ける", "次へ"]) {
       await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: t }));
     }
     await sleep(1500);
   }
-  if (!(await mapPresent())) { log("  [Git横断] マップを検出できず（完了画面のボタン文言が未知の可能性）。"); return false; }
-  // フロンティアタイルを特定して force クリック（中央は裏のホームに覆われ得るため force 必須）。
+  if (!(await tilesInDom())) { log("  [Git横断] マップを検出できず（完了フローのボタン文言が未知の可能性）。"); await dump("no-map"); return false; }
+  // ③ フロンティアタイルを特定して force クリック（中央は裏のホームに覆われ得るため force 必須）。
   const target = nextLessonName
     ? page.locator(`button[aria-label*="${nextLessonName}（Lesson 1）"]`)
     : page.locator('button[aria-label*="（Lesson 1）"]');
@@ -840,7 +861,8 @@ async function tryGitMapAdvance(page, { log = console.log, nextLessonName = null
     .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 25000 })
     .then(() => true)
     .catch(() => false);
-  log(ok ? "  [Git横断] ✅ 次コース Lesson1 Q1 に到達。" : "  [Git横断] ⚠ Q1 を検出できず。");
+  if (!ok) await dump("tile-fail");
+  log(ok ? "  [Git横断] ✅ 次コース Lesson1 Q1 に到達。" : "  [Git横断] ⚠ タイルクリック後も Q1 を検出できず。");
   return ok;
 }
 
