@@ -740,12 +740,38 @@ export async function advanceToNextCourse(page, { log = console.log } = {}) {
   log("  [次コース②] 「次のコースへ」…");
   await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: "次のコースへ" }));
   await sleep(2500);
+
+  // 診断採取: ②直後の画面（＝コース一覧 or 次コース紹介）を毎回ダンプする。コース間自動ナビが⑤で
+  // 外れる真因（次コースタイルが画面下でスクロール要 など）を次回の実データで特定するため
+  // （HTML＋フルページ画像）。失敗してもナビは続行する。
+  const dumpNav = async (tag) => {
+    try { fs.writeFileSync(path.join(__dirname, `drill-dump.nextcourse-${tag}.html`), await page.content(), "utf-8"); } catch {}
+    try { await page.screenshot({ path: path.join(__dirname, `drill-dump.nextcourse-${tag}.png`), fullPage: true }); } catch {}
+  };
+  await dumpNav("step2-list");
+
   // ③ コース一覧: STARTバッジを持つ“次コース”タイルの再生ボタン(.rounded-full)を直接クリック。
   // ★force:true が必須（実機検証2026-06-28k）。裏に残ったホーム画面が接地点を覆い、通常クリックは
   //   Playwright の「receives events」判定で弾かれてタイムアウトする。force で判定をスキップし実体へ当てる。
-  log("  [次コース③] コース一覧の STARTタイル（再生ボタン・force）…");
-  const startTile = page.locator('button[role="button"]').filter({ hasText: "START" });
-  if (!(await clickFirstVisible(startTile.locator("div.rounded-full"), { force: true }))) {
+  // ★スクロール対応（ユーザー指摘2026-06-30）: 次コースのタイルは一覧の下方にあり、ビューポート外だと
+  //   clickFirstVisible（可視のみクリック）が空振りする。可視のSTART再生ボタンが見つかるまで下へ
+  //   スクロールしてからクリックする。スクロールは window と RN Web の ScrollView 双方に効くよう
+  //   mouse.wheel と scrollBy の両方を撃つ。
+  log("  [次コース③] コース一覧の STARTタイル（再生ボタン・force／必要なら下スクロール）…");
+  const startPlay = page.locator('button[role="button"]').filter({ hasText: "START" }).locator("div.rounded-full");
+  let clickedStart = false;
+  for (let s = 0; s <= 8; s++) {
+    if (await clickFirstVisible(startPlay, { force: true })) { clickedStart = true; break; }
+    if (s < 8) {
+      log(`     ↓ 可視のSTARTタイル無し → 下へスクロール（${s + 1}/8）`);
+      await page.mouse.move(400, 400).catch(() => {});
+      await page.mouse.wheel(0, 600).catch(() => {});
+      await page.evaluate(() => window.scrollBy(0, Math.round((window.innerHeight || 700) * 0.7))).catch(() => {});
+      await sleep(700);
+    }
+  }
+  if (!clickedStart) {
+    const startTile = page.locator('button[role="button"]').filter({ hasText: "START" });
     await clickFirstVisible(startTile, { force: true, position: { x: 359, y: 36 } });
   }
   // コース紹介（レッスン一覧）の描画を待つ。
@@ -763,6 +789,8 @@ export async function advanceToNextCourse(page, { log = console.log } = {}) {
     .then(() => true)
     .catch(() => false);
   log(ok ? "  [次コース⑤] ✅ Lesson1 Q1 に到達。" : "  [次コース⑤] ⚠ Q1 を検出できず。");
+  // ⑤で外れたら、その時点の画面（紹介ページ等）も採取して次回の真因特定に使う。
+  if (!ok) await dumpNav("step5-fail");
   return ok;
 }
 
