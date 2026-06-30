@@ -52,7 +52,11 @@ console.log(`  clearReview: 既知${r.known}/自己訂正${r.corrected}/未知${
 await sleep(1500);
 
 console.log("\n=== advanceToNextCourse 実走 ===");
-const ok = await advanceToNextCourse(page);
+// Git系1本道マップは次コースL1をタイル名で厳密特定できる（ダブルレンダー対策）。
+//   例: NEXT_LESSON="クラウド連携体験ツアー" node scripts/drill-verify-nextcourse.mjs
+const nextLessonName = process.env.NEXT_LESSON || null;
+if (nextLessonName) console.log(`  （次コースL1タイルを「${nextLessonName}」で厳密特定）`);
+const ok = await advanceToNextCourse(page, { nextLessonName });
 await sleep(800);
 const after = await readState(page).catch(() => ({}));
 try { fs.writeFileSync(path.join(__dirname, "drill-dump.verify-nextcourse.html"), await page.content(), "utf-8"); } catch {}

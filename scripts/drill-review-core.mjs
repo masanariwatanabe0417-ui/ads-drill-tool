@@ -795,7 +795,81 @@ async function clickFirstVisible(loc, opts = {}) {
 //   弾かれる。実機では各タイル内の小さい丸ボタン(.rounded-full / 番号バッジ)＝中央を外した縁だけが効く。
 //   よって丸ボタンを直接クリックし、無ければ縁寄り座標で force クリックする。
 // 戻り値: 次コースの解答ボタン(Q1)を検出できたら true。
-export async function advanceToNextCourse(page, { log = console.log } = {}) {
+// Git完全マスターシリーズの各コース Lesson1 名（マップ横断のタイル特定用）。
+// drill-dump.nextcourse-step2-list（2026-06-30b 実データ）から確定。コース順は lib/courseOrder.ts と一致。
+//   1 Git概念マスターコース→Git世界一周ツアー / 2 Git個人開発入門コース→ソロ開発体験ツアー /
+//   3 GitHubクラウド連携→クラウド連携体験ツアー / 4 ブランチ戦略コース→ブランチ体験ツアー /
+//   5 チーム開発コース→チーム開発体験ツアー / 6 Gitトラブルシューティング→トラブルシューティングツアー /
+//   7 Git開発フロー実践→開発フローツアー / 8 Git免許皆伝→なぜの旅
+export const GIT_SERIES_FIRST_LESSONS = [
+  "Git世界一周ツアー", "ソロ開発体験ツアー", "クラウド連携体験ツアー", "ブランチ体験ツアー",
+  "チーム開発体験ツアー", "トラブルシューティングツアー", "開発フローツアー", "なぜの旅",
+];
+
+// Git系1本道マップ専用の横断ナビ。
+// このシリーズは「コース完了画面/次のコースへ/STARTタイル/コース紹介」を持たず、全コース全レッスンが
+// 1枚の縦長マップに button[aria-label="○○（Lesson N）"]（解錠）/ [aria-label="○○（ロック中）"]（ロック）
+// として一度に描画される（スクロールはビューポート移動のみ・HTMLは不変＝step2-list 実データで確定）。
+// コース完了で次コースの L1 が解錠され「（Lesson 1）」ボタンになる。完了済みコースの L1 も同じボタンの
+// まま残るが、それらより必ず DOM 後方に出る＝最後尾の「（Lesson 1）」ボタンがフロンティア＝次コース L1。
+// nextLessonName を渡せば aria-label で厳密に特定する（ダブルレンダー対策＝より安全）。無ければ最後尾を使う。
+// 戻り値: 次コースの Q1（quiz-answer-option）を検出できたら true。
+async function tryGitMapAdvance(page, { log = console.log, nextLessonName = null } = {}) {
+  const mapPresent = async () =>
+    (await page.locator('button[aria-label*="（Lesson 1）"], [aria-label*="（ロック中）"]').count().catch(() => 0)) > 0;
+  // フィナーレ完了画面がマップを覆っている場合に備え、マップへ戻る/閉じる系を押してみる（無ければ無害）。
+  if (!(await mapPresent())) {
+    for (const t of ["マップに戻る", "マップへ", "ホームに戻る", "とじる", "閉じる", "完了", "つづける", "続ける", "次へ"]) {
+      await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: t }));
+    }
+    await sleep(1500);
+  }
+  if (!(await mapPresent())) { log("  [Git横断] マップを検出できず（完了画面のボタン文言が未知の可能性）。"); return false; }
+  // フロンティアタイルを特定して force クリック（中央は裏のホームに覆われ得るため force 必須）。
+  const target = nextLessonName
+    ? page.locator(`button[aria-label*="${nextLessonName}（Lesson 1）"]`)
+    : page.locator('button[aria-label*="（Lesson 1）"]');
+  const n = await target.count().catch(() => 0);
+  if (!n) { log(`  [Git横断] 対象タイル（${nextLessonName ?? "（Lesson 1）"}）が見つからず。`); return false; }
+  const tile = target.last(); // フロンティア＝最後尾
+  const label = await tile.getAttribute("aria-label").catch(() => null);
+  log(`  [Git横断] フロンティアタイル「${label}」を force クリック…`);
+  await tile.scrollIntoViewIfNeeded().catch(() => {});
+  await tile.click({ force: true }).catch(() => {});
+  const ok = await page
+    .waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 25000 })
+    .then(() => true)
+    .catch(() => false);
+  log(ok ? "  [Git横断] ✅ 次コース Lesson1 Q1 に到達。" : "  [Git横断] ⚠ Q1 を検出できず。");
+  return ok;
+}
+
+export async function advanceToNextCourse(page, { log = console.log, nextLessonName = null } = {}) {
+  // 診断採取: コース間自動ナビが外れる真因を実データで特定するためのダンプ（HTML＋フルページ画像）。
+  // 失敗してもナビは続行する。
+  const dumpNav = async (tag) => {
+    try { fs.writeFileSync(path.join(__dirname, `drill-dump.nextcourse-${tag}.html`), await page.content(), "utf-8"); } catch {}
+    try { await page.screenshot({ path: path.join(__dirname, `drill-dump.nextcourse-${tag}.png`), fullPage: true }); } catch {}
+  };
+  // ★step0＝最終問回答“直後”の画面（＝フィナーレ完了画面そのもの）を、何もクリックする前に採取する。
+  //   Git系1本道マップはこの画面に「コース完了を見る/次のコースへ」が無く、前セッションでは取り逃していた。
+  //   ここを捕まえないとGit横断ナビの実ボタン文言/タイル構造が分からない（2026-06-30b 残課題）。
+  await dumpNav("step0-finale");
+
+  // ===== Git完全マスター系（1本道マップ）の早期分岐 =====
+  // マップタイル（（Lesson N）/（ロック中））が居れば Git 系。Web系の「次のコースへ/STARTタイル」は無いので
+  // 先に Git 横断を試す（Web系ステップの 8回スクロール空振りや誤クリックを避ける）。
+  const gitStyle =
+    (await page.locator('button[aria-label*="（Lesson 1）"], [aria-label*="（ロック中）"]').count().catch(() => 0)) > 0;
+  if (gitStyle || nextLessonName) {
+    log("  [次コース] Git系1本道マップを検出 → マップ横断ナビ…");
+    const ok = await tryGitMapAdvance(page, { log, nextLessonName });
+    if (ok) return true;
+    await dumpNav("step5-fail");
+    // Git 検出済みで失敗した場合は Web系ステップに進んでも当たらないのでここで終了。
+    if (gitStyle) return false;
+  }
+
   // ① レッスン完了画面 → コース完了画面
   log("  [次コース①] 「コース完了を見る」…");
   await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: "コース完了を見る" }));
@@ -805,13 +879,7 @@ export async function advanceToNextCourse(page, { log = console.log } = {}) {
   await clickFirstVisible(page.locator('[tabindex="0"]').filter({ hasText: "次のコースへ" }));
   await sleep(2500);
 
-  // 診断採取: ②直後の画面（＝コース一覧 or 次コース紹介）を毎回ダンプする。コース間自動ナビが⑤で
-  // 外れる真因（次コースタイルが画面下でスクロール要 など）を次回の実データで特定するため
-  // （HTML＋フルページ画像）。失敗してもナビは続行する。
-  const dumpNav = async (tag) => {
-    try { fs.writeFileSync(path.join(__dirname, `drill-dump.nextcourse-${tag}.html`), await page.content(), "utf-8"); } catch {}
-    try { await page.screenshot({ path: path.join(__dirname, `drill-dump.nextcourse-${tag}.png`), fullPage: true }); } catch {}
-  };
+  // 診断採取: ②直後の画面（＝コース一覧 or 次コース紹介）を毎回ダンプする。
   await dumpNav("step2-list");
 
   // ③ コース一覧: STARTバッジを持つ“次コース”タイルの再生ボタン(.rounded-full)を直接クリック。
