@@ -221,7 +221,12 @@ export function extractPairs(expl) {
   if (!m) return [];
   const pairs = [];
   for (const line of m[1].split("\n")) {
-    const mm = line.match(/^\s*[-*・]?\s*(.+?)\s*(?:→|↔|⇔|->)\s*(.+?)\s*$/);
+    // ⚠ 左に矢印を含む対応（実データ GitHubクラウド連携 L6 Q4:
+    //   「ローカル → リモート → push(プッシュ)」）がある。左を非貪欲 (.+?) で取ると
+    //   最初の矢印で切れ 左=「ローカル」右=「リモート → push(プッシュ)」と誤分割し、
+    //   右が実セル(push/pull)と一致せず割当不能→機械接続→不正解6回停止していた。
+    //   → 左を貪欲 (.+) にして「最後の矢印」で分割する（右は末尾の短い答えラベル）。
+    const mm = line.match(/^\s*[-*・]?\s*(.+)\s*(?:→|↔|⇔|->)\s*(.+?)\s*$/);
     if (mm) pairs.push({ left: mm[1].trim(), right: mm[2].trim() });
   }
   return pairs;
