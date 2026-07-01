@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, topOptionByFrequency, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs, extractPairs } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, topOptionByFrequency, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs, extractPairs, permute, buildClozeCandidates } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -252,6 +252,80 @@ const clozeExplGitMerge = `## 問題
 const clozeOptsGitMerge = ["コミット", "ブランチ", "マージ", "プッシュ"];
 t("Git L4 Q5 の正解=[マージ]を引く（誤答ブランチが本文先頭に出るが頻度で正解マージを選ぶ）", () => {
   assert.deepEqual(extractClozeSequence(clozeExplGitMerge, clozeOptsGitMerge, 1), ["マージ"]);
+});
+
+// 実ライブ(ブランチ戦略コース L4「実験世界での作業」Q9 穴埋め×3)の保存解説。問題文に固定語として
+// 「feature」が印字されており（「feature ブランチで ＿＿＿ をしても…」）、選択肢にも feature が
+// ダミーで入っている。理由本文「featureブランチでどんな実験をしても、mainブランチは常に安全な状態を…」を
+// 裸の出現順で走査すると固定語 feature を先頭に拾い [feature, どんな実験, main] と1つずれて誤導出→
+// 自己訂正も同じ誤答を再導出し6回停止していた。問題文（## 問題）の固定文に既出の feature を候補から
+// 外せば、正解 [どんな実験, main, 安全な] が引ける。
+const clozeExplBranch = `## 問題
+feature ブランチで ＿＿＿ をしても、 ＿＿＿ ブランチは常に ＿＿＿ 状態を保てる
+
+## 回答
+選択問題です。正解は下の「解説」を参照してください。
+
+選択肢:
+- どんな実験
+- feature
+- リモート
+- main
+- 安全な
+- 危険な
+
+## 解説
+### なぜこれが正解？
+ブランチの最大のメリットは「独立した開発環境を作る」ことです。featureブランチでどんな実験をしても、mainブランチは常に安全な状態を保てるからこそ、失敗を恐れずに新しい機能開発ができるんです。
+
+### 間違い選択肢のどこが違う？
+**「feature ブランチ」：** 空欄に入る選択肢ではなく、文の主語になる部分なので不適切です。
+**「リモート」：** 開発の独立性という本質とは関わりません。
+**「危険な」：** 逆の意味になってしまいます。`;
+const clozeOptsBranch = ["どんな実験", "feature", "リモート", "main", "安全な", "危険な"];
+t("ブランチ戦略 L4 Q9 の正解順=[どんな実験, main, 安全な]を引く（問題文の固定語 feature を候補から除外）", () => {
+  assert.deepEqual(extractClozeSequence(clozeExplBranch, clozeOptsBranch, 3), ["どんな実験", "main", "安全な"]);
+});
+
+// permute: K! 個の全順列（cloze の順序総当たり用）。
+t("permute: 3要素は6順列・重複なし・各順列は元の集合と同じ要素", () => {
+  const ps = permute(["a", "b", "c"]);
+  assert.equal(ps.length, 6);
+  assert.equal(new Set(ps.map((p) => p.join(","))).size, 6);
+  for (const p of ps) assert.deepEqual([...p].sort(), ["a", "b", "c"]);
+  assert.deepEqual(permute(["x"]), [["x"]]);
+  assert.deepEqual(permute([]), [[]]);
+});
+
+// buildClozeCandidates: 導出の第一候補＋充填集合の全順列を“不正解を避けて”出せる。これで初回導出が
+// 外れても順序違いを尽くして必ず正答へ収束する（[[review-selfcorrect-from-feedback]] の恒久版）。
+t("buildClozeCandidates: 正しい導出が先頭・かつ全順列(6件)を含む（ブランチ L4 Q9 実データ）", () => {
+  const cands = buildClozeCandidates(clozeExplBranch, clozeOptsBranch, 3);
+  assert.deepEqual(cands[0], ["どんな実験", "main", "安全な"]); // 導出＝第一候補
+  assert.equal(cands.length, 6); // 充填集合[どんな実験,main,安全な]の全順列を網羅
+  const keys = new Set(cands.map((c) => c.join("¦")));
+  assert.ok(keys.has("どんな実験¦main¦安全な")); // 正解の順序が候補に必ず含まれる
+});
+
+// 「集合は合っているが順序だけ外した」ケースでも、不正解を記憶して次候補を選べば正解順に到達できる。
+t("buildClozeCandidates: 先頭候補が不正解でも“未試行”の中に正解順が残る（順序総当たりで収束）", () => {
+  const cands = buildClozeCandidates(clozeExplBranch, clozeOptsBranch, 3);
+  const tried = new Set();
+  let answer = null;
+  for (let i = 0; i < cands.length; i++) {
+    const pick = cands.find((c) => !tried.has(c.join("¦")));
+    assert.ok(pick, "未試行候補が尽きる前に正解へ到達するはず");
+    if (pick.join("¦") === "どんな実験¦main¦安全な") { answer = pick; break; }
+    tried.add(pick.join("¦")); // この順序は不正解だったと記憶
+  }
+  assert.deepEqual(answer, ["どんな実験", "main", "安全な"]);
+  assert.ok(tried.size <= 5, "3空欄なら最大6候補＝MAX_ATTEMPTS(8)内で必ず収束");
+});
+
+// 学習済み正解（フィードバック由来。単一空欄で有効）があれば最優先候補になる。
+t("buildClozeCandidates: 学習済み正解を渡すと最優先候補になる", () => {
+  const cands = buildClozeCandidates(clozeExplBranch, clozeOptsBranch, 3, ["main", "安全な", "どんな実験"]);
+  assert.deepEqual(cands[0], ["main", "安全な", "どんな実験"]);
 });
 
 // readCorrectFromFeedback の単一空欄・自己訂正フォールバック相当（実ライブ Git L4 Q5 の quiz-feedback）。

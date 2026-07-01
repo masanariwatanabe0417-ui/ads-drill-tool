@@ -296,7 +296,26 @@ export function topOptionByFrequency(hay, options) {
 // 期待数（blankCount）に満たない/曖昧なときは空配列＝未知扱い（report）にフォールバック。
 export function extractClozeSequence(expl, options, blankCount) {
   if (!expl || !options?.length || !blankCount) return [];
-  const tryOn = (body) => orderedOptionsInText(body, options);
+  // ⚠ 問題文（## 問題）に“固定語”として既に印字されている選択肢は空欄の答えではない＝ダミー。
+  //   これを本文の出現順走査に混ぜると、固定語が先頭に来て答え全体が1つずれる（実ライブ
+  //   ブランチ戦略コース L4 Q9: 問題「feature ブランチで ＿＿＿ をしても、＿＿＿ ブランチは常に
+  //   ＿＿＿ 状態を保てる」で、選択肢 feature は固定語なのに本文冒頭「featureブランチで…」に
+  //   一致して拾われ [feature, どんな実験, main] と誤導出→6回停止。正解は [どんな実験, main, 安全な]）。
+  //   → 空欄マーカー（＿の連なり／_の連なり／［…］）を除いた問題文に現れる選択肢を候補から外す。
+  //   ただし外すと blankCount を満たせない時は安全側で元の選択肢のまま（消しすぎ防止）。
+  let opts = options;
+  const stemM = expl.match(/##\s*問題\s*\n([\s\S]*?)(?:\n#{2,3}\s|$)/);
+  if (stemM) {
+    const stemFixed = normLoose(stemM[1].replace(/[＿_]{2,}|[［\[][^］\]]*[］\]]/g, " "));
+    if (stemFixed) {
+      const filtered = options.filter((o) => {
+        const full = normLoose(o);
+        return !(full && stemFixed.includes(full)); // 問題文に既出＝ダミーなので除外
+      });
+      if (filtered.length >= blankCount) opts = filtered;
+    }
+  }
+  const tryOn = (body) => orderedOptionsInText(body, opts);
   // ⚠ 解説の冒頭には buildAnswerBlock の「選択肢: - A - B …」列挙があり、語が“列挙順”に並ぶ。
   // これを走査すると列挙順を答え順と誤認する（実ライブ Lesson8 Q10 で『ブラウザ→インターネット』と
   // 誤導出＝正解は『ブラウザ→サーバー』）。→ まず選択肢列挙ブロックを常に除去し、その上で『## 解説』
@@ -331,13 +350,56 @@ export function extractClozeSequence(expl, options, blankCount) {
   // 単一空欄の最終手段: 正解理由本文での“出現頻度が最多”の語を採る（最初の出現位置だと誤答語を
   // 拾う実ライブ Git L4 Q5 を救う）。複数空欄は順序が要るので頻度は使わず従来の出現順のまま。
   if (seq.length < blankCount && blankCount === 1) {
-    const top = topOptionByFrequency(primary, options);
+    const top = topOptionByFrequency(primary, opts);
     if (top) return [top];
   }
   // フォールバック: 引用句で足りなければ正解理由の本文全体 → 選択肢列挙を除いた全文の順で再走査。
   if (seq.length < blankCount) seq = tryOn(primary);
   if (seq.length < blankCount) seq = tryOn(noList);
   return seq.length >= blankCount ? seq.slice(0, blankCount) : [];
+}
+
+// K要素の全順列（K! 個）を返す。cloze の空欄数は 2〜3 程度なので K! は小さい（2 or 6）。
+export function permute(arr) {
+  if (!Array.isArray(arr) || arr.length <= 1) return [Array.isArray(arr) ? arr.slice() : []];
+  const out = [];
+  for (let i = 0; i < arr.length; i++) {
+    const rest = arr.slice(0, i).concat(arr.slice(i + 1));
+    for (const p of permute(rest)) out.push([arr[i], ...p]);
+  }
+  return out;
+}
+
+// cloze の「空欄を埋める順序」候補をランク付き（先頭ほど確度が高い）で返す。
+//   1) フィードバックから学習済みの正解（あれば最優先）
+//   2) extractClozeSequence の導出（従来の第一候補）
+//   3) 充填集合の全順列（＝“どの語が入るか”は合っていて順序だけ外したケースを網羅）
+// 呼び出し側（clearReview）が「一度不正解だった順序」を記憶し、次は未試行の候補を出す。これにより
+// 初回導出が外れても順序違いを尽くして必ず正答へ収束し、「同じ誤答を再導出→6回ループ→停止」を根絶する
+// （[[review-selfcorrect-from-feedback]]／実ライブ ブランチ戦略 L4 Q9 の穴埋め×3 停止対策の恒久版）。
+export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
+  const cands = [];
+  const seen = new Set();
+  const push = (seq) => {
+    if (!Array.isArray(seq) || seq.length !== blankCount) return;
+    const k = seq.join("¦");
+    if (seen.has(k)) return;
+    seen.add(k);
+    cands.push(seq.slice());
+  };
+  if (learnedSeq) push(learnedSeq);
+  const primary = extractClozeSequence(expl, options, blankCount);
+  push(primary);
+  // 充填集合＝順列の元。導出が空欄数ぶん取れていればその集合（stem除外済み）、無ければ本文出現順の上位 blankCount。
+  let fillSet = primary.length === blankCount ? primary : null;
+  if (!fillSet) {
+    const ordered = orderedOptionsInText(expl, options);
+    if (ordered.length >= blankCount) fillSet = ordered.slice(0, blankCount);
+  }
+  if (fillSet && fillSet.length === blankCount) {
+    for (const p of permute(fillSet)) push(p);
+  }
+  return cands;
 }
 
 // 選択肢ラベル o が正解 correct と一致するか（app/api/import-question/route.ts と同じロジック）。
@@ -519,7 +581,10 @@ export async function clearReview(page, index, opts = {}) {
   // corrections: sig -> { text } / { seq }（学習した正解）  attempts: sig -> 試行回数（周回の打ち切り用）。
   const corrections = new Map();
   const attempts = new Map();
-  const MAX_ATTEMPTS = 6;
+  // 穴埋め専用: sig -> 既に試して不正解だった順序キー(Set)。次回は未試行の候補順序を選ぶ（順序総当たり）。
+  const clozeTried = new Map();
+  // 3空欄=6順列＋導出/学習ぶんの余地。順列を尽くす前に打ち切らないよう 6→8 に緩和（誤停止を減らすだけで安全側）。
+  const MAX_ATTEMPTS = 8;
   let corrected = 0;
 
   for (let i = 0; i < maxQuestions; i++) {
@@ -578,33 +643,46 @@ export async function clearReview(page, index, opts = {}) {
       corrections.delete(sig);
       corr = null;
     }
-    if (!s.answered && corr) {
-      // --- 自己訂正: 前回の不正解後にフィードバックから読んだ正解で答え直す（全タイプ共通の最終手段）---
+    // このイテレーションで穴埋めに使った順序キー（不正解時に記憶するため）。
+    let triedClozeKey = null;
+    if (!s.answered && s.isCloze) {
+      // --- 穴埋め: 候補順序をランク生成し“未試行”の候補で埋める。不正解だった順序は記憶して二度と出さない ---
+      // 集合が合っていれば順序違い(K!通り)を尽くして必ず正答へ収束＝初回導出が外れても6回ループ停止しない。
+      // 学習済み正解（フィードバック由来。単一空欄で有効）があれば最優先候補にする。
+      const learned = corr ? (corr.seq?.length ? corr.seq : corr.text ? [corr.text] : null) : null;
+      const cands = buildClozeCandidates(hit?.expl || "", s.options, s.clozeBlanks, learned);
+      const tried = clozeTried.get(sig) || new Set();
+      const pick = cands.find((c) => !tried.has(c.join("¦")));
+      if (pick && s.clozeBlanks > 0) {
+        triedClozeKey = pick.join("¦");
+        const nth = tried.size + 1;
+        if (nth === 1) {
+          known += 1;
+          log(`[${s.qnum}]${kindLabel} 既知 → 空欄${s.clozeBlanks}個を「${pick.join(" → ")}」で埋める`);
+        } else {
+          corrected += 1;
+          log(`[${s.qnum}]${kindLabel} 再挑戦(${nth}) → 別の順序「${pick.join(" → ")}」で埋め直す`);
+        }
+        await answerCloze(page, pick, s.clozeBlanks);
+      } else {
+        // 候補を出し尽くした（順序を全通り試して全滅＝充填集合が誤り等）→ 報告し best effort 前進（MAX_ATTEMPTSで停止）。
+        unknownList.push(s.qnum);
+        log(`\n  ⚠ 穴埋めの全候補が不正解: ${s.qnum}（空欄${s.clozeBlanks} / 候補${cands.length}件を試行済）`);
+        log(`     問題: ${s.questionText}`);
+        log(`     選択肢: ${JSON.stringify(s.options)}`);
+        if (!auto && waitForGo) await waitForGo("     → 確認したら Enter で再開（先頭から埋めて前進します）… ");
+        else log("     （止めずに先頭から埋めて前進）");
+        await answerCloze(page, [], s.clozeBlanks || s.options.length);
+      }
+    } else if (!s.answered && corr) {
+      // --- 自己訂正（線結び/並べ替え/選択）: 前回の不正解後にフィードバックから読んだ正解で答え直す ---
       corrected += 1;
       log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corr.text ?? (corr.seq || []).join(" / ")}」で再回答`);
-      if (s.isCloze) await answerCloze(page, corr.seq?.length ? corr.seq : (corr.text ? [corr.text] : []), s.clozeBlanks);
-      else if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
+      if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
       else if (s.isOrdering) await answerOrdering(page, s, corr.seq?.length ? corr.seq : (hit?.order ?? []));
       else await answerChoice(page, { correctText: corr.text ?? null, index: 0, log });
     } else if (!s.answered) {
-      if (s.isCloze) {
-        // cloze（複数空欄）: 保存解説から空欄順の正解シーケンスを導き、順にタップ→確定。
-        const seq = hit ? extractClozeSequence(hit.expl, s.options, s.clozeBlanks) : [];
-        if (seq.length === s.clozeBlanks && s.clozeBlanks > 0) {
-          known += 1;
-          log(`[${s.qnum}]${kindLabel} 既知 → 空欄${s.clozeBlanks}個を「${seq.join(" → ")}」で埋める`);
-          await answerCloze(page, seq, s.clozeBlanks);
-        } else {
-          // 正解シーケンスを確定できない → 報告し相談（best effort で前進）
-          unknownList.push(s.qnum);
-          log(`\n  ⚠ 未知/シーケンス不明の穴埋め: ${s.qnum}（空欄${s.clozeBlanks} / 導出${seq.length}）`);
-          log(`     問題: ${s.questionText}`);
-          log(`     選択肢: ${JSON.stringify(s.options)}`);
-          if (!auto && waitForGo) await waitForGo("     → 確認したら Enter で再開（先頭から埋めて前進します）… ");
-          else log("     （止めずに先頭から埋めて前進）");
-          await answerCloze(page, [], s.clozeBlanks || s.options.length);
-        }
-      } else if (s.isMatching) {
+      if (s.isMatching) {
         // マッチング: 保存解説の「正しい対応」で接続。読めなければ左[i]→右[i]（best effort）。
         const pairs = hit?.pairs ?? [];
         if (pairs.length) { known += 1; log(`[${s.qnum}]${kindLabel} 既知 → 正しい対応で接続（${pairs.length}ペア）`); }
@@ -651,6 +729,13 @@ export async function clearReview(page, index, opts = {}) {
     if (a.verdict) log(`     判定: ${a.verdict}`);
     attempts.set(sig, (attempts.get(sig) || 0) + 1);
     if (a.verdict && /不正解|残念/.test(a.verdict)) {
+      // 穴埋め: いま試した順序を「不正解」と記憶（次回は buildClozeCandidates の未試行候補が選ばれる）。
+      if (s.isCloze && triedClozeKey) {
+        const set = clozeTried.get(sig) || new Set();
+        set.add(triedClozeKey);
+        clozeTried.set(sig, set);
+        log(`     ✎ この順序は不正解と記憶（次回は別の順序を試す）`);
+      }
       // 不正解 → 回答後フィードバックの緑枠から正解を読み取り、再提示に備えて記録（自己訂正リプレイ）。
       // 診断DOMは「フィードバック直後・他操作の前」に同期で確保する（遷移フラッシュでホームを撮る racy 防止）。
       let wrongHtml = null;
