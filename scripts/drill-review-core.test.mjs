@@ -328,6 +328,31 @@ t("buildClozeCandidates: 学習済み正解を渡すと最優先候補になる"
   assert.deepEqual(cands[0], ["main", "安全な", "どんな実験"]);
 });
 
+// 単一空欄（blankCount=1）は実質 N 択。導出（primary）が外れても全選択肢を候補に加えて総当たりで収束する。
+// 実ライブ チーム開発コース L5 Q6：解説から正解語を導けず候補1件で 8 回ループ停止していた回帰ケース。
+const clozeOptsTeamReview = [
+  "pushすれば自動通知されるので何もしない",
+  "レビュアーに再レビューを依頼する（Re-request Review）",
+  "コメントで@レビュアー名をメンションする",
+  "PRのステータスをReady for reviewに変更する",
+];
+t("buildClozeCandidates: 単一空欄は導出が外れても全選択肢を候補に含み総当たりで正解へ収束（チーム開発 L5 Q6）", () => {
+  // 解説が空でも（導出不能でも）、単一空欄なら全選択肢が候補に入る。
+  const cands = buildClozeCandidates("", clozeOptsTeamReview, 1);
+  const keys = new Set(cands.map((c) => c.join("¦")));
+  for (const o of clozeOptsTeamReview) assert.ok(keys.has(o), `選択肢「${o}」が候補に含まれる`);
+  // clozeTried 記憶で未試行を辿れば、正解「再レビューを依頼」に必ず到達する。
+  const tried = new Set();
+  let answer = null;
+  for (let i = 0; i < cands.length + 1; i++) {
+    const pick = cands.find((c) => !tried.has(c.join("¦")));
+    assert.ok(pick, "未試行候補が尽きる前に正解へ到達するはず");
+    if (pick[0] === clozeOptsTeamReview[1]) { answer = pick; break; }
+    tried.add(pick.join("¦"));
+  }
+  assert.deepEqual(answer, [clozeOptsTeamReview[1]]);
+});
+
 // readCorrectFromFeedback の単一空欄・自己訂正フォールバック相当（実ライブ Git L4 Q5 の quiz-feedback）。
 // ワンポイント本文に正解『マージ』のほか付随語『コミット』が混ざる。従来は orderedOptionsInText が
 // 2語返し「=== clozeBlanks(1)」で弾かれ自己訂正できなかった。頻度最多（同数は最先頭）なら正解を選べる。

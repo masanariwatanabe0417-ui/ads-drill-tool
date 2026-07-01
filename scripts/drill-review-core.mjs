@@ -399,6 +399,12 @@ export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
   if (fillSet && fillSet.length === blankCount) {
     for (const p of permute(fillSet)) push(p);
   }
+  // 単一空欄は「どの選択肢が入るか」＝実質 N 択。導出（primary）が外れても
+  // 全選択肢を候補に加えて総当たり＝clozeTried の記憶と併せて必ず正答へ収束する
+  // （複数空欄は順列で尽くすが、単一空欄は fillSet が1語で導出値しか試さず詰まっていた）。
+  if (blankCount === 1) {
+    for (const o of options || []) push([o]);
+  }
   return cands;
 }
 
