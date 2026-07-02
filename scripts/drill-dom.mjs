@@ -174,3 +174,35 @@ export async function readState(page) {
     return { options, correctAnswer, isOrdering, isMatching, isCloze, clozeBlanks, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
   });
 }
+
+// --- シリーズのテーマ色を DOM から収集する（②色分け用・副作用なし）---
+// ドリルの新UIはシリーズごとにテーマ色を持つ。特定セレクタに依存すると UI 変更で壊れるため、
+// 「画面上で十分な面積を占める・彩度のある背景色」を面積加重で数え、最頻の色を代表色として返す。
+// 白/黒/グレー（彩度が低い）と小さな要素は除外。見つからなければ null。返り値は "#rrggbb"。
+export async function collectThemeColor(page) {
+  return page
+    .evaluate(() => {
+      const counts = new Map();
+      for (const el of document.querySelectorAll("body *")) {
+        const rect = el.getBoundingClientRect();
+        if (rect.width < 40 || rect.height < 20) continue; // 小さすぎる要素はノイズ
+        const bg = getComputedStyle(el).backgroundColor || "";
+        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
+        if (!m) continue;
+        const [r, g, b] = [+m[1], +m[2], +m[3]];
+        const a = m[4] === undefined ? 1 : +m[4];
+        if (a < 0.5) continue; // ほぼ透明
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 40) continue; // 彩度が低い（白/黒/グレー）
+        const key = `${r},${g},${b}`;
+        counts.set(key, (counts.get(key) || 0) + rect.width * rect.height);
+      }
+      let best = null, bestWeight = 0;
+      for (const [key, weight] of counts) {
+        if (weight > bestWeight) { best = key; bestWeight = weight; }
+      }
+      if (!best) return null;
+      const hex = best.split(",").map((n) => (+n).toString(16).padStart(2, "0")).join("");
+      return `#${hex}`;
+    })
+    .catch(() => null);
+}

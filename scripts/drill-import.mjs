@@ -29,8 +29,21 @@ import path from "path";
 import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
-import { readState, sleep } from "./drill-dom.mjs";
+import { readState, sleep, collectThemeColor } from "./drill-dom.mjs";
 import { fetchIndex, clearReview, answerChoice, answerCloze, advanceToNextCourse } from "./drill-review-core.mjs";
+import { reportProgress, progressLog } from "./progress-report.mjs";
+
+// 進捗モニター: 予期しない停止も UI に伝える（挙動は従来どおり=表示してから終了）。
+process.on("uncaughtException", (e) => {
+  reportProgress({ phase: "error", waiting: true, message: `エラーで停止: ${e.message}` });
+  console.error(e);
+  process.exit(1);
+});
+process.on("unhandledRejection", (e) => {
+  reportProgress({ phase: "error", waiting: true, message: `エラーで停止: ${e instanceof Error ? e.message : e}` });
+  console.error(e);
+  process.exit(1);
+});
 
 const __dirnameEarly = path.dirname(fileURLToPath(import.meta.url));
 const GO_FILE = path.join(__dirnameEarly, ".import-go");
@@ -40,16 +53,19 @@ const GO_FILE = path.join(__dirnameEarly, ".import-go");
 // - バックグラウンド実行（TTYなし）の場合: ファイル scripts/.import-go が作られたら開始
 //   （操作者がログ上の階層を確認後に作成する。Enter を押せない環境でも確認を挟める）
 function waitForGo(prompt) {
+  // 進捗モニター: 開始合図待ち＝🟢ユーザー操作待ちを UI に出す（解除は resolve 後）。
+  reportProgress({ phase: "waiting-user", waiting: true, message: prompt.replace(/\s+/g, " ").trim() });
+  const resolved = () => reportProgress({ waiting: false, message: "開始合図を受領。処理を続行します。" });
   if (process.stdin.isTTY) {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-    return new Promise((resolve) => rl.question(prompt, () => { rl.close(); resolve(); }));
+    return new Promise((resolve) => rl.question(prompt, () => { rl.close(); resolved(); resolve(); }));
   }
   try { fs.unlinkSync(GO_FILE); } catch {}
   console.log(prompt);
   console.log(`  (バックグラウンド実行のため、確認後に ${GO_FILE} が作成されたら開始します)`);
   return new Promise((resolve) => {
     const t = setInterval(() => {
-      if (fs.existsSync(GO_FILE)) { clearInterval(t); try { fs.unlinkSync(GO_FILE); } catch {} resolve(); }
+      if (fs.existsSync(GO_FILE)) { clearInterval(t); try { fs.unlinkSync(GO_FILE); } catch {} resolved(); resolve(); }
     }, 1000);
   });
 }
@@ -115,6 +131,13 @@ console.log("==============================================\n");
 // この待機中、ホーム画面に「学習中のシリーズ」が見えていればシリーズ名を先取りして覚えておく。
 // （クイズ画面に入るとシリーズ名がDOMから消えるため、ここで拾えないと空になる）
 console.log("問題画面（解答ボタン）が表示されるのを待っています…（最大10分）");
+reportProgress({
+  phase: "waiting-q1",
+  waiting: true,
+  message: "ドリルにログインし、取り込むレッスンのQ1を表示してください（最大10分待機）",
+  series: "", course: "", lesson: "", question: "", total: null,
+  savedLesson: 0, savedTotal: 0,
+});
 let capturedSeries = "";
 const waitDeadline = Date.now() + 600000;
 while (Date.now() < waitDeadline) {
@@ -132,10 +155,12 @@ while (Date.now() < waitDeadline) {
 }
 if (!(await page.$('[data-testid^="quiz-answer-option-"]'))) {
   console.log("問題画面を検出できませんでした（10分経過）。終了します。");
+  reportProgress({ phase: "error", waiting: true, message: "問題画面を検出できず終了（10分経過）。スクリプトの再実行が必要です。" });
   await ctx.close().catch(() => {});
   process.exit(1);
 }
 console.log(`問題画面を検出。取り込みを開始します。${capturedSeries ? `（シリーズ先取り: ${capturedSeries}）` : ""}\n`);
+reportProgress({ phase: "importing", waiting: false, message: "問題画面を検出。取り込みを開始します。" });
 
 // （readState は scripts/drill-dom.mjs に移設・共有。挙動は不変。）
 
@@ -161,6 +186,22 @@ async function resolveLessonName(title) {
 // レッスンはレッスンごとに再検出する（③ループで次のレッスンへ進むたびに変わるため）。
 const first = await readState(page);
 const series = process.env.SERIES || first.series || capturedSeries || "不明シリーズ";
+reportProgress({ series });
+
+// ② シリーズテーマ色の自動収集（オマケ・best effort）: Q1画面の支配的な彩色を
+// シリーズ代表色として /api/series-colors へ保存する。失敗しても取り込みは続行。
+const COLORS_API = API.replace(/\/api\/.*$/, "/api/series-colors");
+try {
+  const themeColor = await collectThemeColor(page);
+  if (themeColor && series !== "不明シリーズ") {
+    await fetch(COLORS_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ series, color: themeColor }),
+    });
+    console.log(`（シリーズ色を収集: ${series} = ${themeColor}）`);
+  }
+} catch {}
 // course0（コース名）はコースごとに確定する（シリーズ一括では次コースで変わる）→ 下のコースループ内で設定。
 
 // MAX_COURSES: 既定1＝単一コース（従来動作）。2以上で「シリーズ一括」＝コース内は全自動で巡回し、
@@ -208,6 +249,11 @@ async function importLesson({ series, course, lesson }) {
       `[${s.qnum}]${kindLabel} ${s.questionText.slice(0, 40)}…  左=${JSON.stringify(s.options)}` +
         (s.isMatching ? ` 右=${JSON.stringify(s.rightItems)}` : "")
     );
+    reportProgress({
+      phase: "importing", waiting: false,
+      question: s.qnum, total: s.total ?? null,
+      message: `${s.qnum}${s.total ? `/${s.total}` : ""}${kindLabel} を処理中`,
+    });
 
     // まだ回答していなければ回答する
     if (!s.answered) {
@@ -340,6 +386,7 @@ async function importLesson({ series, course, lesson }) {
       if (r.ok) {
         imported += 1;
         console.log(`  ✓ 保存: ${r.json.questionInfo}  keyLearning「${(r.json.keyLearning || "").slice(0, 30)}…」`);
+        reportProgress({ savedLesson: imported, message: `${s.qnum} を保存（このレッスン ${imported} 問目）` });
       } else {
         console.log(`  ✗ 保存失敗 (${r.status}): ${(r.text || "").slice(0, 120)}`);
       }
@@ -426,8 +473,10 @@ if (MANUAL_ADVANCE) {
     console.log(`  コース  : ${course}`);
     console.log(`  レッスン: ${lesson}`);
     console.log(`  総問題数: ${st.total ?? "不明"}`);
+    reportProgress({ phase: "importing", waiting: false, course, lesson, total: st.total ?? null, savedLesson: 0, message: `「${lesson}」の取り込みを開始` });
     const imp = await importLesson({ series, course, lesson });
     totalImported += imp;
+    reportProgress({ savedTotal: totalImported, message: `「${lesson}」完了（${imp} 問保存 / 累計 ${totalImported} 問）` });
     n += 1;
     console.log(`\n取り込み完了。${imp} 問を保存（このレッスン）/ 累計 ${totalImported} 問・${n} レッスン。`);
     console.log("\n次のレッスン（別コースでも可）の『Q1』まで進めてください（復習を終えてから／終了は Ctrl+C）。");
@@ -493,6 +542,7 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   console.log(`  コース  : ${course0}`);
   console.log(`  レッスン: ${lesson}`);
   console.log(`  総問題数: ${st.total ?? "不明"}`);
+  reportProgress({ phase: "importing", waiting: false, course: course0, lesson, total: st.total ?? null, savedLesson: 0, message: `「${lesson}」の取り込みを開始` });
 
   // --- (B) 確認待ち（初回レッスンのみ。2レッスン目以降は無人で自動継続）---
   if (L === 0) {
@@ -510,6 +560,7 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   totalImported += imported;
   courseImported += imported;
   console.log(`\n取り込み完了。${imported} 問を保存（累計 ${totalImported} 問）。`);
+  reportProgress({ savedTotal: totalImported, message: `「${lesson}」完了（${imported} 問保存 / 累計 ${totalImported} 問）` });
   prevLessonName = lesson;
 
   // --- (D) NO_REVIEW: 遷移手段（復習クリアの「次のレッスンへ」）が無いため単一レッスンで終了 ---
@@ -525,12 +576,14 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   // clearReview が完了画面を検出して「次のレッスンへ」を押す。
   await sleep(1500);
   console.log("\n=== 復習クリア（②）＝保存済み正解で突破（AI再課金なし）===");
+  reportProgress({ phase: "review", waiting: false, message: "復習クリア中（保存済み正解で自動突破・課金なし）" });
   const index = await fetchIndex(STUDYLOG_API); // ★ループ内: このレッスンを取込んだ直後のstudyLogで復習する
   const r = await clearReview(page, index, {
     auto: loopMode ? true : AUTO_UNKNOWN, // ループ時は無人継続のため未知でも止めず前進
     maxQuestions: MAX_QUESTIONS,
     waitForGo, // 未知問題で停止する際の再開待ち（.import-go / Enter）。loopMode時は auto:true で使われない
     dumpDir: __dirnameEarly,
+    log: progressLog, // 進捗モニターへ復習ログを流す（コンソール出力は従来どおり）
   });
   lastReview = r;
 
@@ -559,6 +612,7 @@ for (let L = 0; L < MAX_LESSONS; L++) {
 }
 
  console.log(`\n=== コース「${course0}」取り込み終了 ===  このコース ${courseImported} 問 / シリーズ累計 ${totalImported} 問。`);
+ reportProgress({ phase: "course-done", waiting: false, message: `コース「${course0}」終了（${courseImported} 問 / 累計 ${totalImported} 問）` });
  if (!seriesMode) break;
  // ⚠ 設計ガード: コースが「正常完了」でなく「途中で詰まって停止」した場合は次コースへ進ませない。
  //   正常なコース終端は復習を通過しレッスン完了(レッスン完了!)に到達して『次のレッスンへ』が無い状態
@@ -574,5 +628,6 @@ for (let L = 0; L < MAX_LESSONS; L++) {
 
 console.log(`\n=== ${seriesMode ? "シリーズ" : "コース"}取り込み終了 ===  累計 ${totalImported} 問を保存しました。`);
 console.log("アプリ(http://localhost:3000)を再読み込みすると先生ペインに反映されます。");
+reportProgress({ phase: "done", waiting: false, message: `取り込み終了（累計 ${totalImported} 問を保存）` });
 await ctx.close().catch(() => {});
 process.exit(0);

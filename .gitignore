@@ -57,3 +57,6 @@ scripts/.prod-serve.log
 # 取込/本番サーバーの実行ログ（ローカルのみ）
 .import-run.log
 .prod-serve.log
+
+# 取込進捗モニターの一時ファイル（scripts/progress-report.mjs が書く）
+.import-progress.json

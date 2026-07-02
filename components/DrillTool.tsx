@@ -42,6 +42,21 @@ export default function DrillTool() {
   const [teacherError, setTeacherError] = useState<string | null>(null);
   const [isDrillPanelOpen, setIsDrillPanelOpen] = useState(false);
   const [isAutoEnabled, setIsAutoEnabled] = useState(false);
+  // スクショペインの折りたたみ（取込は全自動でペインを使わないため、普段は畳んで先生ペインを広く）
+  const [isScreenshotPaneCollapsed, setIsScreenshotPaneCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("screenshotPaneCollapsed") === "1";
+    } catch {
+      return false;
+    }
+  });
+  const toggleScreenshotPane = useCallback(() => {
+    setIsScreenshotPaneCollapsed((prev) => {
+      const next = !prev;
+      try { localStorage.setItem("screenshotPaneCollapsed", next ? "1" : "0"); } catch {}
+      return next;
+    });
+  }, []);
   const [deletedGlossaryTerms, setDeletedGlossaryTerms] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem("deletedGlossaryTerms");
@@ -639,7 +654,7 @@ export default function DrillTool() {
           onRenameQuestion={renameQuestion}
         />
       </div>
-      <div className="w-72 shrink-0">
+      <div className={isScreenshotPaneCollapsed ? "w-9 shrink-0" : "w-72 shrink-0"}>
         <ScreenshotPane
           screenshots={screenshots}
           onScreenshotUpload={handleScreenshotUpload}
@@ -649,6 +664,8 @@ export default function DrillTool() {
           disabled={teacherLoading}
           isAutoEnabled={isAutoEnabled}
           onAutoToggle={setIsAutoEnabled}
+          collapsed={isScreenshotPaneCollapsed}
+          onToggleCollapse={toggleScreenshotPane}
         />
       </div>
       <div className="flex-1 min-w-[300px]">

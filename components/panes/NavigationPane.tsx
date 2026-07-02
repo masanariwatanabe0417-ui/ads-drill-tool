@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BookOpen, BookMarked, ChevronDown, ChevronRight, FileText, GraduationCap, Library, Pencil } from "lucide-react";
 import { StudyLog, TeacherView } from "@/lib/types";
 import { COURSE_ORDER, courseNumber } from "@/lib/courseOrder";
+import { seriesColor, withAlpha } from "@/lib/seriesColors";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 
@@ -53,6 +54,15 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
 
   // シリーズは既定で展開（コースが見える状態）にしたいので「閉じているもの」を集合で持つ。
   // コース／レッスンは既定で折りたたみ（従来どおり）なので「開いているもの」を集合で持つ。
+  // シリーズのテーマ色（本家ドリルから自動収集した色。無ければフォールバック表→名前ハッシュ）
+  const [collectedColors, setCollectedColors] = useState<Record<string, string> | null>(null);
+  useEffect(() => {
+    fetch("/api/series-colors")
+      .then((r) => r.json())
+      .then((data) => { if (data && typeof data === "object") setCollectedColors(data); })
+      .catch(() => {});
+  }, []);
+
   const [collapsedSeries, setCollapsedSeries] = useState<Set<string>>(new Set());
   const [expandedCourses, setExpandedCourses] = useState<Set<string>>(new Set());
   const [expandedLessons, setExpandedLessons] = useState<Set<string>>(new Set());
@@ -174,6 +184,8 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                 (s, c) => s + c.lessons.reduce((a, l) => a + l.questions.length, 0),
                 0
               );
+              // シリーズのテーマ色（本家ドリルの色。「色でどのコースか想像できる」ための目印）
+              const color = seriesColor(group.seriesName, collectedColors);
 
               return (
                 <div key={group.seriesName}>
@@ -181,20 +193,21 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                   <button
                     onClick={() => toggleSeries(group.seriesName)}
                     className="w-full flex items-center gap-0.5 px-1 py-1.5 rounded-md text-left hover:bg-accent"
+                    style={{ backgroundColor: withAlpha(color, 0.08) }}
                   >
                     {seriesExpanded
                       ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
                       : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />}
-                    <Library className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    <Library className="h-3.5 w-3.5 shrink-0" style={{ color }} />
                     <div className="min-w-0">
-                      <p className="text-xs font-bold truncate">{group.seriesName}</p>
+                      <p className="text-xs font-bold truncate" style={{ color }}>{group.seriesName}</p>
                       <p className="text-xs opacity-60">{group.courses.length}コース・{seriesTotalQ}問学習済み</p>
                     </div>
                   </button>
 
-                  {/* コース一覧（シリーズ配下） */}
+                  {/* コース一覧（シリーズ配下・左のガイド線もシリーズ色） */}
                   {seriesExpanded && (
-                    <div className="ml-3 pl-1 border-l space-y-1">
+                    <div className="ml-3 pl-1 border-l space-y-1" style={{ borderLeftColor: withAlpha(color, 0.5) }}>
                       {group.courses.map((course) => {
                         const courseView: TeacherView = { type: "course", courseKey: course.courseKey };
                         const courseExpanded = expandedCourses.has(course.courseKey);
@@ -221,7 +234,10 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                           : "hover:bg-accent"
                       )}
                     >
-                      <GraduationCap className="h-3.5 w-3.5 shrink-0" />
+                      <GraduationCap
+                        className="h-3.5 w-3.5 shrink-0"
+                        style={isActive(courseView) ? undefined : { color }}
+                      />
                       <div className="min-w-0">
                         <p className="text-xs font-semibold truncate">{course.courseName}</p>
                         <p className="text-xs opacity-60">{totalQ}問学習済み</p>

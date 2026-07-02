@@ -2,11 +2,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAutoScreenshot } from "@/lib/hooks/useAutoScreenshot";
-import { Upload, X, Clipboard, Camera, ExternalLink } from "lucide-react";
+import { Upload, X, Clipboard, Camera, ExternalLink, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DrillScreenshots, ScreenshotSlot } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import ImportProgressCard, { useImportProgress } from "./ImportProgressCard";
 
 function usePasteShortcut() {
   const [label, setLabel] = useState("Ctrl+V");
@@ -29,6 +30,9 @@ interface ScreenshotPaneProps {
   disabled: boolean;
   isAutoEnabled: boolean;
   onAutoToggle: (enabled: boolean) => void;
+  // 折りたたみ（幅は親 DrillTool 側が切り替える。こちらは表示の出し分けのみ）
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }
 
 // 画像を最大幅 1200px・JPEG 85% に圧縮してから base64 化
@@ -191,12 +195,16 @@ export default function ScreenshotPane({
   disabled,
   isAutoEnabled,
   onAutoToggle,
+  collapsed,
+  onToggleCollapse,
 }: ScreenshotPaneProps) {
   const [activeSlot, setActiveSlot] = useState<ScreenshotSlot>("courseMap");
   const questionInputRef = useRef<HTMLInputElement>(null);
   const answerInputRef = useRef<HTMLInputElement>(null);
   const courseMapInputRef = useRef<HTMLInputElement>(null);
   const pasteShortcut = usePasteShortcut();
+  // 取込スクリプトの進捗（動いていない時は null）。折りたたみ中もドットで気配を出す。
+  const importProgress = useImportProgress();
 
   // コースマップが埋まったら自動で「問題」へフォーカス移動
   // （Q2以降はコースマップが既に入っているので、初回マウント時も同様に動作）
@@ -239,11 +247,50 @@ export default function ScreenshotPane({
     return () => window.removeEventListener("paste", handlePaste);
   }, [activeSlot, onScreenshotUpload]);
 
+  // 折りたたみ時: 細い縦バー（クリックで展開）。取込が動いていれば状態ドットを表示。
+  if (collapsed) {
+    const waiting = !!importProgress?.waiting;
+    return (
+      <button
+        onClick={onToggleCollapse}
+        title="スクリーンショットペインを開く"
+        className="flex flex-col items-center h-full w-full border-r bg-muted/30 hover:bg-accent transition-colors pt-3 gap-2"
+      >
+        <ChevronsRight className="h-3.5 w-3.5 text-muted-foreground" />
+        <Camera className="h-3.5 w-3.5 text-amber-500" />
+        {importProgress && (
+          <span
+            title={importProgress.message}
+            className={cn(
+              "h-2 w-2 rounded-full",
+              importProgress.phase === "error" ? "bg-red-500"
+                : waiting ? "bg-green-500 animate-pulse"
+                : "bg-blue-500 animate-pulse"
+            )}
+          />
+        )}
+        <span
+          className="text-[10px] font-bold text-muted-foreground tracking-wider"
+          style={{ writingMode: "vertical-rl" }}
+        >
+          スクショ{importProgress ? "・取込中" : ""}
+        </span>
+      </button>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full border-r">
       <div className="p-3 border-b">
         <div className="flex items-center justify-between gap-1">
           <div className="flex items-center gap-1.5">
+            <button
+              onClick={onToggleCollapse}
+              title="ペインを折りたたむ"
+              className="p-0.5 rounded hover:bg-accent text-muted-foreground shrink-0"
+            >
+              <ChevronsLeft className="h-3.5 w-3.5" />
+            </button>
             <Camera className="h-3.5 w-3.5 text-amber-500 shrink-0" />
             <h2 className="text-xs font-bold text-amber-600 uppercase tracking-wider">
               スクリーンショット
@@ -297,6 +344,8 @@ export default function ScreenshotPane({
 
       <ScrollArea className="flex-1">
         <div className="p-3 space-y-3">
+          {/* 取込スクリプトが動いている間だけ進捗モニターを表示 */}
+          {importProgress && <ImportProgressCard progress={importProgress} />}
           <SlotCard
             type="courseMap"
             label="コースマップ"
