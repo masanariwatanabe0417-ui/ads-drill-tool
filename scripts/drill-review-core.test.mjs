@@ -2,7 +2,7 @@
 // (b) 復習自己訂正の取り違え修正を実証する。実ライブ(2026-06-27f Lesson8 The Finale)で起きた
 // 「○✕の訂正『間違い』が4択へ誤適用されてスタック」を、その場のDOM値で再現して検証する。
 import assert from "node:assert/strict";
-import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, topOptionByFrequency, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs, extractPairs, permute, buildClozeCandidates, arrangements } from "./drill-review-core.mjs";
+import { questionSig, correctionApplies, optionMatchesCorrect, findLoose, extractClozeSequence, orderedOptionsInText, topOptionByFrequency, extractOrderFromFeedbackText, bestOverlapIndex, resolveWithElimination, assignMatchingPairs, extractPairs, permute, buildClozeCandidates, arrangements, planOrderingTaps, synonymOverlapIndex } from "./drill-review-core.mjs";
 
 let pass = 0;
 const t = (name, fn) => { fn(); pass++; console.log("  ✓", name); };
@@ -426,6 +426,44 @@ t("フィードバックから正解順（略語列）を抽出", () => {
 t("前置きが無い/矢印が無い場合は空（誤学習しない）", () => {
   assert.deepEqual(extractOrderFromFeedbackText("不正解...もう一度挑戦しましょう"), []);
   assert.deepEqual(extractOrderFromFeedbackText(""), []);
+});
+
+// 「の順です」が無い新UIフィードバック（2026-07-03 実ライブ シリーズツアー L1 Q6 の review-wrong-Q6.html 実テキスト）。
+// 矢印チェーンそのものを正解順として抽出し、末尾の説明文（── 以降）は切り落とす。
+t("「の順です」無し・矢印チェーンのみのフィードバックから抽出（──以降の説明は除去）", () => {
+  const fb =
+    "不正解... マスターのワンポイント リクエスト → サーバー処理 → レスポンス → ブラウザ表示 ── この 4 つの流れが Web アプリの基本です。";
+  assert.deepEqual(extractOrderFromFeedbackText(fb), [
+    "リクエスト", "サーバー処理", "レスポンス", "ブラウザ表示",
+  ]);
+});
+t("矢印1個（2項目）のチェーンには適用しない（誤検知防止）", () => {
+  assert.deepEqual(extractOrderFromFeedbackText("不正解... リクエスト → レスポンス が基本です。"), []);
+});
+
+// 並べ替えタップ計画（2026-07-03 実ライブ シリーズツアーL1 復習の実データ）。
+// ヒント「サーバー処理/レスポンス」は選択肢と語が重ならない言い換え（準備する/返す）で、
+// 消去法単独では2手順が未解決→未解決stepがstep4計画済みの選択肢を横取りして3↔4逆順で不正解ループだった。
+// 同義語展開＋予約制で全手順が正しく解決できることを確認する。
+console.log("\n並べ替え: タップ計画（消去法＋同義語展開）");
+const seriesTourOptions = [
+  "ブラウザが画面に描き出す",
+  "サーバーが応答を準備する",
+  "サーバーが HTML/CSS/JS を返す",
+  "ブラウザがサーバーにリクエストを送る",
+];
+t("言い換え選択肢でも4手順すべて正しく対応づけできる", () => {
+  assert.deepEqual(
+    planOrderingTaps(seriesTourOptions, ["リクエスト", "サーバー処理", "レスポンス", "ブラウザ表示"]),
+    [3, 1, 2, 0]
+  );
+});
+t("synonymOverlapIndex: レスポンス→「返す」を含む選択肢（使用済み除外つき）", () => {
+  assert.equal(synonymOverlapIndex(seriesTourOptions, "レスポンス", [3, 1]), 2);
+  assert.equal(synonymOverlapIndex(seriesTourOptions, "サーバー処理", [3]), 1);
+});
+t("synonymOverlapIndex: 同義語グループに該当しないヒントは -1（誤タップしない）", () => {
+  assert.equal(synonymOverlapIndex(seriesTourOptions, "データベース", []), -1);
 });
 
 // 実際の並べ替え選択肢（フル文）。略語ヒントをこれらに対応づけられれば正しい順でタップできる。

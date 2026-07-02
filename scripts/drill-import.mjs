@@ -211,6 +211,37 @@ const MAX_COURSES = parseInt(process.env.MAX_COURSES ?? "1", 10);
 const seriesMode = MAX_COURSES > 1;
 // MANUAL_NEXT_COURSE=1: コース間の自動ナビを使わず、操作者が手で次コースのQ1まで移動する従来挙動に固定。
 const MANUAL_NEXT_COURSE = process.env.MANUAL_NEXT_COURSE === "1";
+// GATE_AFTER_COURSE=1: 「最初のコース境界」だけの検証チェックポイント（2026-07-03）。
+// 1コース目の取込完了→次コースQ1への自動ナビ成功後に、一度だけ開始合図(.import-go / Enter)を待って停止する。
+// 画面がQ1で正しいことを確認して合図すれば、2コース目以降はそのまま全自動（シリーズ一括）で継続する。
+// 「コース一括→次コースQ1で一旦停止→OKならシリーズ一括」の段階検証用。
+const GATE_AFTER_COURSE = process.env.GATE_AFTER_COURSE === "1";
+// SKIP_IMPORTED=1: レッスン開始時に studyLog を照会し、そのコース/レッスンが既に「全問保存済み」なら
+// /api/import-question へPOSTせず巡回だけ行う（＝NO_IMPORT をレッスン単位で自動適用・課金なしで前進）。
+// 既取込エリアを跨いでシリーズ一括を回す際の二重課金防止（2026-07-03。[[verify-studylog-before-import]] の自動化）。
+// 部分取込（保存数 < 総問題数）のレッスンは通常どおり取り込む。
+const SKIP_IMPORTED = process.env.SKIP_IMPORTED === "1";
+
+// studyLog を照会して course/lesson が全問保存済みかを返す（保存済み問数 or false）。
+// 照会失敗時は false（＝通常取込）に倒す。名前は空白正規化で比較する。
+async function lessonAlreadyImported(course, lesson, total) {
+  if (!SKIP_IMPORTED) return false;
+  try {
+    const res = await fetch(STUDYLOG_API);
+    if (!res.ok) return false;
+    const d = await res.json();
+    const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
+    for (const c of d.courses ?? []) {
+      if (norm(c.courseName ?? c.name) !== norm(course)) continue;
+      for (const l of c.lessons ?? []) {
+        if (norm(l.lessonName ?? l.name) !== norm(lesson)) continue;
+        const n = (l.questions ?? []).length;
+        return total && n >= total ? n : false;
+      }
+    }
+  } catch {}
+  return false;
+}
 
 // MAX_LESSONS: 既定1＝単一レッスン（従来動作）。2以上で「コース一括ループ（③）」＝1レッスン取込→
 // 復習突破→次のレッスンへ遷移→次レッスンのQ1検出→取込継続 を、現コース内で最大この数だけ繰り返す。
@@ -231,7 +262,8 @@ const onlyTargets = process.env.ONLY
   : null;
 
 // 1レッスン分を取り込む（解答→公式解説取得→/api/import-question へ保存→次へ）。返り値＝保存できた問数。
-async function importLesson({ series, course, lesson }) {
+// noImport=true なら保存POSTをスキップして巡回のみ（SKIP_IMPORTED のレッスン単位適用。既定は NO_IMPORT 環境変数）。
+async function importLesson({ series, course, lesson, noImport = NO_IMPORT }) {
   const seen = new Set();
   let imported = 0;
 
@@ -367,7 +399,7 @@ async function importLesson({ series, course, lesson }) {
       else if (s.isOrdering) console.log(`  → [並べ替え] 判定: ${a.verdict} / 正解順は解説に含む`);
       else if (s.isCloze) console.log(`  → [穴埋め×${s.clozeBlanks}] 判定: ${a.verdict} / 正解シーケンスは解説から復習時に導出`);
       else console.log(`  → 正解: ${a.correctAnswer} / 判定: ${a.verdict}`);
-      if (NO_IMPORT) {
+      if (noImport) {
         console.log(`  (NO_IMPORT: ${s.qnum} は保存スキップ＝復習トリガーのみ・AI再課金なし)`);
       } else {
       // postQuestionWithRetry: fetch失敗/5xx は復帰を待って再試行。回復しなければ throw で全体停止。
@@ -390,7 +422,7 @@ async function importLesson({ series, course, lesson }) {
       } else {
         console.log(`  ✗ 保存失敗 (${r.status}): ${(r.text || "").slice(0, 120)}`);
       }
-      } // end NO_IMPORT
+      } // end noImport
     }
     } // end ONLY フィルタ
 
@@ -510,6 +542,11 @@ for (let C = 0; C < MAX_COURSES; C++) {
    }
    if (!gotNext) { console.log("⚠ 次コースのQ1を検出できませんでした。シリーズ取り込みを終了します。"); break; }
    await sleep(800);
+   // 検証チェックポイント（最初のコース境界のみ）: Q1到達を報告して合図を待つ。以降の境界は全自動。
+   if (GATE_AFTER_COURSE && C === 1) {
+     console.log("\n✅ 次コースの Q1 に到達しました（コース間自動ナビ成功）。GATE_AFTER_COURSE=1 のためここで一旦停止します。");
+     await waitForGo("  → 画面が次コースの Q1 で正しければ合図で続行（2コース目以降は全自動＝シリーズ一括）。中止は Ctrl+C … ");
+   }
  }
  // このコースのコース名を確定（初回は env COURSE 優先、以降は DOM 検出）。
  const cstate = await readState(page);
@@ -555,8 +592,13 @@ for (let L = 0; L < MAX_LESSONS; L++) {
   }
   console.log("");
 
-  // --- (C) このレッスンを取り込む ---
-  const imported = await importLesson({ series, course: course0, lesson });
+  // --- (C) このレッスンを取り込む（SKIP_IMPORTED: 全問保存済みレッスンは保存せず巡回のみ＝課金なし）---
+  const already = await lessonAlreadyImported(course0, lesson, st.total);
+  if (already) {
+    console.log(`  ★ SKIP_IMPORTED: 「${lesson}」は既に ${already} 問保存済み → 保存POSTなしで巡回のみ（課金なし）`);
+    reportProgress({ message: `「${lesson}」は既取込（${already}問）→ 課金なしで前進のみ` });
+  }
+  const imported = await importLesson({ series, course: course0, lesson, noImport: !!already });
   totalImported += imported;
   courseImported += imported;
   console.log(`\n取り込み完了。${imported} 問を保存（累計 ${totalImported} 問）。`);

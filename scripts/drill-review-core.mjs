@@ -120,12 +120,21 @@ export function extractOrderFromFeedbackText(text) {
   if (!text) return [];
   const norm = (text || "").replace(/\s+/g, " ");
   const m = norm.match(/([^。]*?)\s*の順(?:です|に|で|番)/);
-  if (!m) return [];
   // 「ワンポイント」「正しくは」等のラベルがあればその後ろだけを順序列とみなす。
-  let seg = m[1].split(/ワンポイント|正しくは|正解は|正しい順序|順番は|順序は/).pop();
+  let seg = m ? m[1].split(/ワンポイント|正しくは|正解は|正しい順序|順番は|順序は/).pop() : null;
+  // 「の順です」が無いフィードバック対応（2026-07-03 実DOM=review-wrong-Q6.html で確定）:
+  // 例「マスターのワンポイント リクエスト → サーバー処理 → レスポンス → ブラウザ表示 ── この 4 つの流れが基本です。」
+  // 矢印チェーン（→が2個以上＝3項目以上）そのものを正解順とみなす。誤検知防止のため2項目チェーンには適用しない。
+  if (seg == null) {
+    const chain = norm.match(/[^→。]{1,60}(?:\s*(?:→|⇒|⇨|->)\s*[^→。]{1,60}){2,}/);
+    if (!chain) return [];
+    seg = chain[0].split(/ワンポイント|正しくは|正解は|正しい順序|順番は|順序は/).pop();
+  }
   const parts = seg
     .split(/\s*(?:→|⇒|⇨|->|＞|>|、|，|・)\s*/)
-    .map((x) => x.trim())
+    // 末尾項目に続く説明文（「ブラウザ表示 ── この4つの流れが…」）は長ダッシュで切り落とす。
+    // ASCII の -- は選択肢の実テキスト（CLIフラグ等）に含まれ得るため対象にしない。
+    .map((x) => x.split(/──|—|―/)[0].trim())
     .filter(Boolean);
   return parts.length >= 2 ? parts : [];
 }
@@ -728,7 +737,7 @@ export async function clearReview(page, index, opts = {}) {
       corrected += 1;
       log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corr.text ?? (corr.seq || []).join(" / ")}」で再回答`);
       if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
-      else if (s.isOrdering) await answerOrdering(page, s, corr.seq?.length ? corr.seq : (hit?.order ?? []));
+      else if (s.isOrdering) await answerOrdering(page, s, corr.seq?.length ? corr.seq : (hit?.order ?? []), log);
       else await answerChoice(page, { correctText: corr.text ?? null, index: 0, log });
     } else if (!s.answered) {
       if (s.isMatching) {
@@ -742,7 +751,7 @@ export async function clearReview(page, index, opts = {}) {
         const order = hit?.order ?? [];
         if (order.length) { known += 1; log(`[${s.qnum}]${kindLabel} 既知 → 正しい順序でタップ（${order.length}手順）`); }
         else log(`[${s.qnum}]${kindLabel} ${hit ? "既知(順序不明)" : "未知"} 上から順タップ: ${s.questionText.slice(0, 30)}…`);
-        await answerOrdering(page, s, order);
+        await answerOrdering(page, s, order, log);
       } else {
         // 選択式: 既知＆正解がマップできれば正解テキストでタップ。できなければ未知扱い（先頭）。
         let idx = -1;
@@ -1206,21 +1215,79 @@ export async function answerMatching(page, s, pairs = []) {
 
 // 並べ替え。order（保存解説の正しい順序）があればその順にタップ。
 // タップすると消えるので、毎回現在の選択肢を読み直して該当をタップ。order 無しは上から順。
-export async function answerOrdering(page, s, order = []) {
+// 並べ替えヒント略語と選択肢の言い換え対応（2026-07-03 実ライブ シリーズツアーL1で確定）:
+// ヒント「サーバー処理/レスポンス」に対し選択肢は「サーバーが応答を準備する/HTML・CSS・JSを返す」等、
+// トークンが全く重ならない言い換えがある。頻出IT用語の同義語で重なりスコアを補完する。
+const ORDERING_SYNONYMS = [
+  ["レスポンス", "応答", "返す", "返る", "受け取る"],
+  ["リクエスト", "依頼", "要求", "送る"],
+  ["処理", "準備", "用意", "作る"],
+  ["表示", "描き出す", "描画", "描く", "画面"],
+];
+
+// 同義語展開つき重なりスコアで、未使用候補から一意の最良を返す（曖昧タイは -1）。
+export function synonymOverlapIndex(cands, target, used = []) {
+  const words = new Set();
+  for (const g of ORDERING_SYNONYMS) if (g.some((w) => (target || "").includes(w))) g.forEach((w) => words.add(w));
+  if (words.size === 0) return -1;
+  let best = -1, bestScore = 0, second = 0;
+  cands.forEach((c, j) => {
+    if (used.includes(j)) return;
+    let s = 0;
+    for (const w of words) if (c.includes(w)) s += w.length;
+    if (s > bestScore) { second = bestScore; bestScore = s; best = j; }
+    else if (s > second) second = s;
+  });
+  return bestScore > 0 && bestScore > second ? best : -1;
+}
+
+// ヒント略語列 order → 選択肢 allTexts のタップ計画（index列）を作る純関数。
+// ①消去法の一括解決（線結びで実績の resolveWithElimination）→ ②残りは同義語展開の重なりで補完。
+// 解けない step は -1 のまま（タップ時に「予約外の先頭」へ退避＝他stepの計画済み選択肢を横取りしない）。
+export function planOrderingTaps(allTexts, order) {
+  const plan = resolveWithElimination(allTexts, order);
+  for (let i = 0; i < order.length; i++) {
+    if (plan[i] !== -1) continue;
+    plan[i] = synonymOverlapIndex(allTexts, order[i], plan.filter((x) => x !== -1));
+  }
+  return plan;
+}
+
+export async function answerOrdering(page, s, order = [], log = () => {}) {
+  const readOpts = async () => {
+    const els = await page.$$('[data-testid^="quiz-answer-option-"]');
+    const texts = [];
+    for (const el of els) texts.push((((await el.textContent()) || "").replace(/\s+/g, " ").trim()));
+    return { els, texts };
+  };
   if (order.length) {
-    for (const step of order) {
-      // 現在残っている選択肢テキストを読み、該当を探してクリック
-      const remaining = await page.$$('[data-testid^="quiz-answer-option-"]');
-      if (remaining.length === 0) break;
-      const texts = [];
-      for (const el of remaining) texts.push(((await el.textContent()) || "").replace(/\s+/g, " ").trim());
-      let idx = findLoose(texts, step);
-      // 包含一致で取れない＝略語ヒント（「コマンド実行」）と選択肢フル文の対応 → トークン重なりで救う。
-      if (idx === -1) idx = bestOverlapIndex(texts, step);
-      if (idx !== -1) await remaining[idx].click().catch(() => {});
-      else await remaining[0].click().catch(() => {}); // 取りこぼしは先頭で前進
+    // ①ラベル列→選択肢の対応を最初に「消去法＋同義語」で一括確定する（2026-07-03強化）。
+    //   従来の step ごと単発マッチは、略語（「リクエスト」）が複数選択肢に含まれると曖昧タイ→
+    //   先頭タップ退避で順序が壊れて自己訂正が永遠に不正解のままになる。
+    const { texts: all } = await readOpts();
+    const plan = planOrderingTaps(all, order);
+    log(`     [並べ替え] タップ計画: ${order.map((st, i) => `「${st}」→${plan[i] === -1 ? "?" : `#${plan[i]}「${(all[plan[i]] || "").slice(0, 14)}…」`}`).join(" ")}`);
+    for (let i = 0; i < order.length; i++) {
+      const { els, texts } = await readOpts();
+      if (els.length === 0) break;
+      // 計画した選択肢を「いま画面に残っている」要素から本文一致で探す（タップで消えるUI/残るUIの両対応）。
+      let idx = plan[i] !== -1 ? texts.findIndex((t) => t === all[plan[i]]) : -1;
+      if (idx === -1) {
+        // 未解決 step の退避: 後の step 用に計画済みの選択肢は「予約」して横取りしない
+        // （tap3 が step4 の選択肢を奪って 3↔4 逆順で永遠に不正解、を実ライブで確認済み）。
+        const reserved = new Set(plan.slice(i + 1).filter((x) => x !== -1).map((x) => all[x]));
+        idx = texts.findIndex((t) => !reserved.has(t));
+        if (idx === -1) idx = 0; // 全部予約済み＝計画不整合。先頭で前進
+      }
+      await els[idx].click().catch(() => {});
       await sleep(600);
+      const after = await readOpts();
+      log(`     [並べ替え] tap${i + 1}/${order.length}: 「${(texts[idx] || "").slice(0, 20)}」 → 残り${after.els.length}個`);
     }
+    // 確定直前のDOMを毎回保存（不正解が続く場合の真因特定用・上書き）。
+    try {
+      fs.writeFileSync(path.join(__dirname, "drill-dump.ordering-presubmit.html"), await page.content(), "utf-8");
+    } catch {}
   } else {
     for (let k = 0; k < s.options.length + 1; k++) {
       const remaining = await page.$$('[data-testid^="quiz-answer-option-"]');
