@@ -554,8 +554,20 @@ export async function readCorrectFromFeedback(page, s) {
         return g(c.borderColor) || g(c.backgroundColor) || g(c.color) || g(c.outlineColor);
       };
       const optHasGreen = (opt) => hasGreen(opt) || [...opt.querySelectorAll("*")].some(hasGreen);
-      return [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')]
+      const opts = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
+      const greens = opts
         .filter(optHasGreen)
+        .map((e) => strip(norm(e.textContent)))
+        .filter(Boolean);
+      if (greens.length) return greens;
+      // 緑枠を使わない画面がある（実機: Git開発フロー実践 L5 復習）。その場合も回答後は
+      // 正解の選択肢の aria-label に「（正解）」が付く＝取込側 readState と同じ規則で読む。
+      // （「不正解」は文字列「正解」を含むため除外。aria === textContent は未回答表示なので除外）
+      return opts
+        .filter((e) => {
+          const a = e.getAttribute("aria-label") || "";
+          return a.includes("正解") && !a.includes("不正解") && norm(a) !== norm(e.textContent);
+        })
         .map((e) => strip(norm(e.textContent)))
         .filter(Boolean);
     })

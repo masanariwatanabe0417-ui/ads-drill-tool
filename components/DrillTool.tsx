@@ -374,24 +374,57 @@ export default function DrillTool() {
   const importedFilesRef = useRef(importedFiles);
   importedFilesRef.current = importedFiles;
 
+  // 保存の版印（rev）。読み込んだ時点の rev を保存時に添えることで、サーバー側が
+  // 「読込後に取込等の別書き込みが挟まった」ことを検出し、全置換でなく補完マージに倒す。
+  // （古いコピーを持つタブの保存が取込分を丸ごと消す事故の再発防止・2026-07-02）
+  const studyLogRevRef = useRef<string | null>(null);
+
   // 起動時に保存済み studyLog を読み込む
   useEffect(() => {
     fetch("/api/study-log")
       .then((r) => r.json())
-      .then((data) => { if (data?.courses) setStudyLog(data); })
+      .then((data) => {
+        if (!data?.courses) return;
+        studyLogRevRef.current = typeof data._rev === "string" ? data._rev : null;
+        delete data._rev;
+        setStudyLog(data);
+      })
       .catch(() => {});
   }, []);
 
-  // studyLog が変化したら JSON に保存
+  // studyLog が変化したら JSON に保存。
+  // 保存は直列化する（前の保存の rev 返却を待ってから次を送る）: 並行 POST は古い rev を
+  // 持つため救済マージに倒れ、直前の削除・改名が復活し得る。直列なら常に rev 一致＝全置換。
   const studyLogRef = useRef(studyLog);
   studyLogRef.current = studyLog;
+  const saveInFlightRef = useRef(false);
+  const savePendingRef = useRef(false);
   useEffect(() => {
     if (studyLog.courses.length === 0) return;
-    fetch("/api/study-log", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(studyLog),
-    }).catch(() => {});
+    if (saveInFlightRef.current) {
+      savePendingRef.current = true; // 保存中に変化した分は完了後にまとめて保存
+      return;
+    }
+    const run = async () => {
+      saveInFlightRef.current = true;
+      try {
+        do {
+          savePendingRef.current = false;
+          const r = await fetch("/api/study-log", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...studyLogRef.current, _rev: studyLogRevRef.current }),
+          });
+          const j = await r.json().catch(() => null);
+          if (typeof j?.rev === "string") studyLogRevRef.current = j.rev;
+        } while (savePendingRef.current);
+      } catch {
+        // 失敗しても次の変化で再保存される
+      } finally {
+        saveInFlightRef.current = false;
+      }
+    };
+    run();
   }, [studyLog]);
 
   // ナビからのQ番号修正（AIの読み取り誤り＝例：Q6をQ8と誤読 を手で直す）。

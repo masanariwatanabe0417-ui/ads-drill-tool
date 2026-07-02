@@ -65,6 +65,58 @@ export async function writeStudyLog(body: unknown) {
   }
 }
 
+// --- リビジョン（全置換保存の「後勝ち消失」対策） ---
+// /api/study-log の POST は studyLog 全置換のため、古いコピーを持つタブの保存が
+// 取り込み等の別書き込みを丸ごと消す事故が起きる（実害: 2026-07-02 取込50問消失）。
+// 「クライアントが読み込んだ時点」から別の書き込みが挟まったかを版印で検出する。
+// ファイル保存は mtime、DB保存は updated_at をそのまま版印として使う。
+export async function readStudyLogRev(): Promise<string> {
+  try {
+    if (hasDatabase) {
+      await ensureStudyLogTable();
+      const rows = await sql!`SELECT updated_at FROM study_log WHERE id = 1`;
+      return rows.length > 0 ? String(rows[0].updated_at) : "0";
+    }
+    return fs.existsSync(SAVE_PATH) ? String(fs.statSync(SAVE_PATH).mtimeMs) : "0";
+  } catch {
+    return "0";
+  }
+}
+
+// rev 不一致（＝クライアント読込後に取込等の別書き込みがあった）時の救済マージ。
+// incoming（クライアントの studyLog）に無いコース/レッスン/問題が existing（サーバー現在値）に
+// あれば補完する。両方にあるものは incoming 優先（ユーザーの編集を尊重）。
+// rev が一致する通常保存は従来どおり全置換＝削除・改名もそのまま通る。
+export function mergeMissingQuestions(incoming: StudyLog, existing: StudyLog): StudyLog {
+  const out: StudyLog = {
+    ...incoming,
+    courses: (incoming.courses ?? []).map((c) => ({
+      ...c,
+      lessons: c.lessons.map((l) => ({ ...l, questions: [...l.questions] })),
+    })),
+  };
+  for (const ec of existing.courses ?? []) {
+    const oc = out.courses.find((c) => c.courseKey === ec.courseKey);
+    if (!oc) {
+      out.courses.push(ec);
+      continue;
+    }
+    for (const el of ec.lessons) {
+      const ol = oc.lessons.find((l) => l.lessonName === el.lessonName);
+      if (!ol) {
+        oc.lessons.push(el);
+        continue;
+      }
+      for (const eq of el.questions) {
+        if (!ol.questions.some((q) => q.questionInfo === eq.questionInfo)) {
+          ol.questions.push(eq);
+        }
+      }
+    }
+  }
+  return out;
+}
+
 // 単語帳の手動編集（定義上書き・手動追加・用語名修正）の辞書フィールド。
 // 保存は studyLog 全置換のため、複数タブ/セッションが開いていると
 // 古いコピーの保存で他方の編集が消える（後勝ち）。これを防ぐため、

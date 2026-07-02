@@ -183,18 +183,31 @@ export async function collectThemeColor(page) {
   return page
     .evaluate(() => {
       const counts = new Map();
+      // 1色を面積加重で数える（透明・低彩度=白/黒/グレーは除外）
+      const tally = (m, weight) => {
+        if (!m) return;
+        const [r, g, b] = [+m[1], +m[2], +m[3]];
+        const a = m[4] === undefined ? 1 : +m[4];
+        if (a < 0.5) return; // ほぼ透明
+        if (Math.max(r, g, b) - Math.min(r, g, b) < 40) return; // 彩度が低い（白/黒/グレー）
+        const key = `${r},${g},${b}`;
+        counts.set(key, (counts.get(key) || 0) + weight);
+      };
+      const RGB = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/;
       for (const el of document.querySelectorAll("body *")) {
         const rect = el.getBoundingClientRect();
         if (rect.width < 40 || rect.height < 20) continue; // 小さすぎる要素はノイズ
-        const bg = getComputedStyle(el).backgroundColor || "";
-        const m = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/);
-        if (!m) continue;
-        const [r, g, b] = [+m[1], +m[2], +m[3]];
-        const a = m[4] === undefined ? 1 : +m[4];
-        if (a < 0.5) continue; // ほぼ透明
-        if (Math.max(r, g, b) - Math.min(r, g, b) < 40) continue; // 彩度が低い（白/黒/グレー）
-        const key = `${r},${g},${b}`;
-        counts.set(key, (counts.get(key) || 0) + rect.width * rect.height);
+        const area = rect.width * rect.height;
+        const cs = getComputedStyle(el);
+        tally((cs.backgroundColor || "").match(RGB), area);
+        // グラデーション背景（background-image: linear-gradient(...) 等）の構成色も数える。
+        // 実機（2026-07-02 Git開発フロー実践）で backgroundColor が全て白/グレーの画面があり、
+        // テーマ色がグラデーションにしか現れなかった。面積は構成色で等分する。
+        const grad = cs.backgroundImage || "";
+        if (grad.includes("gradient")) {
+          const stops = grad.match(new RegExp(RGB.source, "g")) || [];
+          for (const s of stops) tally(s.match(RGB), area / stops.length);
+        }
       }
       let best = null, bestWeight = 0;
       for (const [key, weight] of counts) {
