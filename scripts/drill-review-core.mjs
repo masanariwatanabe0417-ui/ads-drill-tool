@@ -360,6 +360,26 @@ export function extractClozeSequence(expl, options, blankCount) {
 }
 
 // K要素の全順列（K! 個）を返す。cloze の空欄数は 2〜3 程度なので K! は小さい（2 or 6）。
+// pool から重複なく k 個を選ぶ順列（arrangement）を列挙する。要素数が多いと爆発するため
+// 呼び出し側で pool を小さく絞る前提（複数空欄穴埋めの総当たり候補生成に使用）。出現順（pool順）を
+// 保つよう先頭要素を優先して深さ優先で並べる＝解説に先に出た語の組合せから先に試せる。
+export function arrangements(pool, k) {
+  const out = [];
+  const used = new Array(pool.length).fill(false);
+  const cur = [];
+  const rec = () => {
+    if (cur.length === k) { out.push(cur.slice()); return; }
+    for (let i = 0; i < pool.length; i++) {
+      if (used[i]) continue;
+      used[i] = true; cur.push(pool[i]);
+      rec();
+      cur.pop(); used[i] = false;
+    }
+  };
+  if (k > 0 && k <= pool.length) rec();
+  return out;
+}
+
 export function permute(arr) {
   if (!Array.isArray(arr) || arr.length <= 1) return [Array.isArray(arr) ? arr.slice() : []];
   const out = [];
@@ -398,6 +418,17 @@ export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
   }
   if (fillSet && fillSet.length === blankCount) {
     for (const p of permute(fillSet)) push(p);
+  }
+  // 複数空欄: 導出した充填“集合”自体が誤りのことがある（正解理由本文が distractor 語に言及し
+  // 出現順が汚れる。実ライブ チーム開発 L6 Q7＝解説「pull は fetch と merge をまとめて…」で
+  // [pull, merge] と誤導出。正解は [pull, push]）。→ 選択肢列挙ブロックを除いた本文に“実際に出現
+  // する”選択肢だけを母集合に、blankCount 個の順列を候補へ追加して総当たり（clozeTried の記憶で収束）。
+  // 母集合は blankCount+2 語までに絞り組合せ爆発を防ぐ（出現順で先頭優先＝解説に先に出た組から試す）。
+  if (blankCount >= 2 && Array.isArray(options)) {
+    const noList = (expl || "").replace(/選択肢[:：]\s*(?:\n\s*[-*・].*)+/g, "");
+    const present = orderedOptionsInText(noList, options);
+    const pool = (present.length >= blankCount ? present : options).slice(0, blankCount + 2);
+    for (const arr of arrangements(pool, blankCount)) push(arr);
   }
   // 単一空欄は「どの選択肢が入るか」＝実質 N 択。導出（primary）が外れても
   // 全選択肢を候補に加えて総当たり＝clozeTried の記憶と併せて必ず正答へ収束する
