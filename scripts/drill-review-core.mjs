@@ -623,6 +623,66 @@ export async function readCorrectFromFeedback(page, s) {
   return s.isCloze ? { seq: greens } : { text: greens[0] };
 }
 
+// 線結びの誤答フィードバックにある「正しい組み合わせ」一覧（左→右が交互の行）からペアを組み立てる純関数。
+// 旧スクショ取込データ（questionText なし・「## 問題」がAIの言い換え文）は studyLog 照合が全滅し、
+// 線結びは学習手段ゼロ＝機械接続の同型リトライで停止していた（実ライブ 2026-07-03 DBがないと壊れる世界 L1 復習Q4）。
+// この一覧は誤答時に必ず表示されるため、ここから学習すれば studyLog に頼らず自己訂正できる。
+//   lines      : 「正しい組み合わせ」ブロックの innerText を行分割したもの（見出し・後続UIを含んでよい）
+//   leftLabels : 画面の左セル一覧（s.options）。行の左右判定に使う
+export function parsePairsFromCorrectCombo(lines, leftLabels) {
+  const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+  const tight = (x) => norm(x).replace(/\s/g, "");
+  const lefts = new Set((leftLabels || []).map(tight));
+  // アイコンフォントのグリフ行を落とす: ペア間に ionicons の矢印（私用領域 U+E000-F8FF）だけの行が
+  // 挟まり、見た目は空でも filter(Boolean) を通過して「右ラベル」に化ける（実DOM検証で発見）。
+  const visible = (x) => norm(x).replace(/[\u{E000}-\u{F8FF}\u{200B}-\u{200D}\u{FE0F}]/gu, "").trim();
+  // 見出しより前の行（問題盤面など）を落とし、「N/N ペア完成」以降の別UIで打ち切る
+  const normed = lines.map(norm).filter((l) => visible(l));
+  let started = !normed.includes("正しい組み合わせ");
+  const body = [];
+  for (const l of normed) {
+    if (!started) { if (l === "正しい組み合わせ") started = true; continue; }
+    if (/^\d+\s*\/\s*\d+\s*ペア完成/.test(l)) break;
+    body.push(l);
+  }
+  // 左ラベル行 → 直後の非左行を右として対応づける
+  const pairs = [];
+  for (let i = 0; i < body.length; i++) {
+    if (!lefts.has(tight(body[i]))) continue;
+    if (i + 1 < body.length && !lefts.has(tight(body[i + 1]))) pairs.push({ left: body[i], right: body[i + 1] });
+  }
+  // 左判定で全ペア取れないとき（表記ゆれ等）は「左右交互の並び」を仮定するフォールバック
+  if (pairs.length < (leftLabels || []).length && body.length === (leftLabels || []).length * 2) {
+    const alt = [];
+    for (let i = 0; i + 1 < body.length; i += 2) alt.push({ left: body[i], right: body[i + 1] });
+    if (alt.length > pairs.length) return alt;
+  }
+  return pairs;
+}
+
+// 誤答後の画面から「正しい組み合わせ」ブロックを探して正解ペアを読む（線結びの自己訂正用）。
+export async function readPairsFromFeedback(page, s) {
+  const lines = await page
+    .evaluate((leftLabels) => {
+      const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+      const tight = (x) => norm(x).replace(/\s/g, "");
+      const heads = [...document.querySelectorAll("*")].filter((e) => norm(e.textContent) === "正しい組み合わせ");
+      let box = heads.pop(); // querySelectorAll は文書順＝pop で最深の見出し要素
+      if (!box) return null;
+      // 全左ラベルを含む最小の祖先まで上る＝ペア一覧のコンテナ（上りすぎると盤面が混ざるため最小で止める）
+      const wants = (leftLabels || []).map(tight).filter(Boolean);
+      for (let i = 0; i < 12 && box.parentElement; i++) {
+        const t = tight(box.innerText || "");
+        if (wants.length && wants.every((w) => t.includes(w))) break;
+        box = box.parentElement;
+      }
+      return (box.innerText || "").split("\n");
+    }, s.options || [])
+    .catch(() => null);
+  if (!lines) return [];
+  return parsePairsFromCorrectCombo(lines, s.options || []);
+}
+
 // 復習ループ＋完了処理。「復習 Q1 の問題画面に居る」前提で呼ぶ。
 //   page    : Playwright Page（クイズ画面）
 //   index   : buildIndex/fetchIndex で作った既知問題インデックス
@@ -744,8 +804,9 @@ export async function clearReview(page, index, opts = {}) {
     } else if (!s.answered && corr) {
       // --- 自己訂正（線結び/並べ替え/選択）: 前回の不正解後にフィードバックから読んだ正解で答え直す ---
       corrected += 1;
-      log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corr.text ?? (corr.seq || []).join(" / ")}」で再回答`);
-      if (s.isMatching) await answerMatching(page, s, hit?.pairs ?? []);
+      const corrLabel = corr.text ?? (corr.pairs?.length ? corr.pairs.map((p) => `${p.left}→${p.right}`).join(" / ") : (corr.seq || []).join(" / "));
+      log(`[${s.qnum}]${kindLabel} 自己訂正 → 学習済み正解「${corrLabel}」で再回答`);
+      if (s.isMatching) await answerMatching(page, s, corr.pairs?.length ? corr.pairs : (hit?.pairs ?? []));
       else if (s.isOrdering) await answerOrdering(page, s, corr.seq?.length ? corr.seq : (hit?.order ?? []), log);
       else await answerChoice(page, { correctText: corr.text ?? null, index: 0, log });
     } else if (!s.answered) {
@@ -822,6 +883,16 @@ export async function clearReview(page, index, opts = {}) {
         } else {
           if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
           log(`     ⚠ 不正解だが正解順を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+        }
+      } else if (s.isMatching) {
+        // 線結びは緑枠1セルでは復元できないが、誤答フィードバックの「正しい組み合わせ」一覧から正解ペアを学習できる。
+        const pairs = await readPairsFromFeedback(page, s);
+        if (pairs.length >= 2) {
+          corrections.set(sig, { pairs });
+          log(`     ✎ 正解ペアを学習: 「${pairs.map((p) => `${p.left}→${p.right}`).join(" / ")}」（再提示されたらこれで答え直す）`);
+        } else {
+          if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
+          log(`     ⚠ 不正解だが「正しい組み合わせ」を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
         }
       } else {
         const learned = await readCorrectFromFeedback(page, s);
