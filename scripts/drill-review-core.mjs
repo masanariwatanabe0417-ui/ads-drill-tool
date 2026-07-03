@@ -220,7 +220,16 @@ export function extractOrder(expl) {
   if (!expl) return [];
   const m = expl.match(/#{2,3}\s*正しい順序\s*\n([\s\S]*?)(?:\n#{2,3}\s|$)/);
   if (!m) return [];
-  return [...m[1].matchAll(/^\s*\d+[.\．、)]\s*(.+?)\s*$/gm)].map((x) => x[1].trim()).filter(Boolean);
+  let items = [...m[1].matchAll(/^\s*\d+[.\．、)]\s*(.+?)\s*$/gm)].map((x) => x[1].trim()).filter(Boolean);
+  // ⚠ 全手順が1行に「1. **A** → 2. **B** → 3. **C**」と矢印チェーンで書かれる形式がある
+  //   （実データ ビルドの裏側 L8 Q9: 1手順として抽出→タップ計画1/3で復習突破に失敗しシリーズ停止）。
+  //   行が1件だけ＆矢印を含むときに限り矢印で分割（複数行リストの手順内矢印を誤分割しないため）。
+  if (items.length === 1 && /(?:→|⇒|⇨|->)/.test(items[0])) {
+    items = items[0].split(/\s*(?:→|⇒|⇨|->)\s*/);
+  }
+  return items
+    .map((s) => s.replace(/^\s*\d+[.\．、)]\s*/, "").replace(/\*\*/g, "").trim())
+    .filter(Boolean);
 }
 
 // 「### 正しい対応」/「## 正しい対応」の「左 → 右」/「左 ↔ 右」行 → {left,right} 配列。
@@ -1191,12 +1200,14 @@ export async function answerMatching(page, s, pairs = []) {
         let container = leftEls[0] || document.body;
         while (container && !leftEls.every((o) => container.contains(o))) container = container.parentElement;
         container = container || document.body;
+        // 右項目の長さ上限は drill-dom.mjs の readState と同じ 100 に揃える（44字の実在右ラベルを
+        // 40 で弾き、読取りを直しても“タップ側の複製フィルタ”が接続を落として 2/3 停止した。一気通貫の統合 L3 Q6）。
         const SKIP = new Set(["リセット", "確定", "回答する", "次の問題へ", "次へ"]);
         document.querySelectorAll("[data-import-ri]").forEach((el) => el.removeAttribute("data-import-ri"));
         let pos = 0, pickedPos = -1;
         for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
           const t = norm(el.textContent);
-          if (!t || t.length > 40 || leftTexts.has(t) || SKIP.has(t)) continue;
+          if (!t || t.length > 100 || leftTexts.has(t) || SKIP.has(t)) continue;
           const cur = pos++;
           if (t === label && !used.includes(cur)) { el.setAttribute("data-import-ri", "1"); pickedPos = cur; break; }
         }

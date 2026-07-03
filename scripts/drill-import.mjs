@@ -222,25 +222,30 @@ const GATE_AFTER_COURSE = process.env.GATE_AFTER_COURSE === "1";
 // 部分取込（保存数 < 総問題数）のレッスンは通常どおり取り込む。
 const SKIP_IMPORTED = process.env.SKIP_IMPORTED === "1";
 
-// studyLog を照会して course/lesson が全問保存済みかを返す（保存済み問数 or false）。
-// 照会失敗時は false（＝通常取込）に倒す。名前は空白正規化で比較する。
+// studyLog を照会して course/lesson の保存状況を返す。
+//   full: 全問保存済み（＝レッスン単位で保存POSTなし巡回）
+//   saved: 保存済み questionInfo の集合（部分取込レッスンで保存済みQだけPOSTスキップ＝
+//          ネットワーク断等で途中停止→再開したとき、先頭からの再取込で二重課金しない。2026-07-03 実障害由来）
+// 照会失敗時は空（＝通常取込）に倒す。名前は空白正規化で比較する。
 async function lessonAlreadyImported(course, lesson, total) {
-  if (!SKIP_IMPORTED) return false;
+  const none = { full: false, saved: new Set(), count: 0 };
+  if (!SKIP_IMPORTED) return none;
   try {
     const res = await fetch(STUDYLOG_API);
-    if (!res.ok) return false;
+    if (!res.ok) return none;
     const d = await res.json();
     const norm = (s) => (s || "").replace(/\s+/g, " ").trim();
     for (const c of d.courses ?? []) {
       if (norm(c.courseName ?? c.name) !== norm(course)) continue;
       for (const l of c.lessons ?? []) {
         if (norm(l.lessonName ?? l.name) !== norm(lesson)) continue;
-        const n = (l.questions ?? []).length;
-        return total && n >= total ? n : false;
+        const qs = l.questions ?? [];
+        const saved = new Set(qs.map((q) => norm(q.questionInfo)).filter(Boolean));
+        return { full: !!(total && qs.length >= total), saved, count: qs.length };
       }
     }
   } catch {}
-  return false;
+  return none;
 }
 
 // MAX_LESSONS: 既定1＝単一レッスン（従来動作）。2以上で「コース一括ループ（③）」＝1レッスン取込→
@@ -263,7 +268,8 @@ const onlyTargets = process.env.ONLY
 
 // 1レッスン分を取り込む（解答→公式解説取得→/api/import-question へ保存→次へ）。返り値＝保存できた問数。
 // noImport=true なら保存POSTをスキップして巡回のみ（SKIP_IMPORTED のレッスン単位適用。既定は NO_IMPORT 環境変数）。
-async function importLesson({ series, course, lesson, noImport = NO_IMPORT }) {
+// savedQnums: 保存済み questionInfo の集合（部分取込レッスンの再開時、該当Qだけ保存POSTをスキップ）。
+async function importLesson({ series, course, lesson, noImport = NO_IMPORT, savedQnums = new Set() }) {
   const seen = new Set();
   let imported = 0;
 
@@ -310,7 +316,7 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT }) {
           let n = 0;
           for (const el of c.querySelectorAll("div[tabindex]:not([data-testid])")) {
             const t = norm(el.textContent);
-            if (!t || t.length > 40 || leftTexts.has(t) || skip.has(t)) continue;
+            if (!t || t.length > 100 || leftTexts.has(t) || skip.has(t)) continue;
             n++;
           }
           return n;
@@ -333,7 +339,7 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT }) {
               let n = 0;
               for (const el of c.querySelectorAll("div[tabindex]:not([data-testid])")) {
                 const t = norm(el.textContent);
-                if (!t || t.length > 40 || leftTexts.has(t) || skip.has(t)) continue;
+                if (!t || t.length > 100 || leftTexts.has(t) || skip.has(t)) continue;
                 if (n === idx) { el.setAttribute("data-import-ri", "1"); break; }
                 n++;
               }
@@ -401,6 +407,8 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT }) {
       else console.log(`  → 正解: ${a.correctAnswer} / 判定: ${a.verdict}`);
       if (noImport) {
         console.log(`  (NO_IMPORT: ${s.qnum} は保存スキップ＝復習トリガーのみ・AI再課金なし)`);
+      } else if (savedQnums.has(s.qnum)) {
+        console.log(`  (SKIP_IMPORTED: ${s.qnum} は保存済み → 保存スキップ・AI再課金なし)`);
       } else {
       // postQuestionWithRetry: fetch失敗/5xx は復帰を待って再試行。回復しなければ throw で全体停止。
       const r = await postQuestionWithRetry({
@@ -594,11 +602,14 @@ for (let L = 0; L < MAX_LESSONS; L++) {
 
   // --- (C) このレッスンを取り込む（SKIP_IMPORTED: 全問保存済みレッスンは保存せず巡回のみ＝課金なし）---
   const already = await lessonAlreadyImported(course0, lesson, st.total);
-  if (already) {
-    console.log(`  ★ SKIP_IMPORTED: 「${lesson}」は既に ${already} 問保存済み → 保存POSTなしで巡回のみ（課金なし）`);
-    reportProgress({ message: `「${lesson}」は既取込（${already}問）→ 課金なしで前進のみ` });
+  if (already.full) {
+    console.log(`  ★ SKIP_IMPORTED: 「${lesson}」は既に ${already.count} 問保存済み → 保存POSTなしで巡回のみ（課金なし）`);
+    reportProgress({ message: `「${lesson}」は既取込（${already.count}問）→ 課金なしで前進のみ` });
+  } else if (already.saved.size) {
+    console.log(`  ★ SKIP_IMPORTED(部分): 「${lesson}」は ${already.count} 問保存済み → 保存済みQはスキップし残りだけ取り込む`);
+    reportProgress({ message: `「${lesson}」は部分取込（${already.count}問）→ 未保存分のみ取り込み` });
   }
-  const imported = await importLesson({ series, course: course0, lesson, noImport: !!already });
+  const imported = await importLesson({ series, course: course0, lesson, noImport: already.full, savedQnums: already.saved });
   totalImported += imported;
   courseImported += imported;
   console.log(`\n取り込み完了。${imported} 問を保存（累計 ${totalImported} 問）。`);

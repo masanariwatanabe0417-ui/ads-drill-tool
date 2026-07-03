@@ -67,7 +67,10 @@ export async function readState(page) {
         const leftSet = new Set(options);
         for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
           const t = norm(el.textContent);
-          if (!t || t.length > 40) continue;
+          // 長さ上限はゴミ除けの補助（主役はコンテナ限定）。40 だと実在の右ラベル
+          // 「Tailwind CSS（スタイル）や shadcn/ui（UI 部品）と役割分担できる」(44字) を
+          // 取り漏らし、機械接続が 2/3 ペアで止まって解答不能→シリーズ停止した（一気通貫の統合 L3 Q6）。
+          if (!t || t.length > 100) continue;
           if (leftSet.has(t)) continue;
           if (rightItems.includes(t)) continue;
           rightItems.push(t);

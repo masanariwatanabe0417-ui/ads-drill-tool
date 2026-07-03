@@ -83,7 +83,7 @@ async function readMatching() {
     if (container) {
       for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
         const t = norm(el.textContent);
-        if (!t || t.length > 40) continue;
+        if (!t || t.length > 100) continue;
         if (leftTexts.has(t)) continue;
         if (SKIP.has(t)) continue;
         right.push({
@@ -158,7 +158,7 @@ async function tagRightByIndex(idx) {
     let n = 0;
     for (const el of container.querySelectorAll("div[tabindex]:not([data-testid])")) {
       const t = norm(el.textContent);
-      if (!t || t.length > 40 || leftTexts.has(t) || SKIP.has(t)) continue;
+      if (!t || t.length > 100 || leftTexts.has(t) || SKIP.has(t)) continue;
       if (n === idx) { el.setAttribute("data-probe-ri", "1"); return true; }
       n++;
     }
