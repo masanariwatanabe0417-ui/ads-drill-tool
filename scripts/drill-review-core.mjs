@@ -541,6 +541,15 @@ export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
   if (blankCount === 1) {
     for (const o of options || []) push([o]);
   }
+  // 最終手段: 本文出現ベースの母集合そのものが誤っていることがある（正解語が解説の地の文に
+  // 一度も出ない＝実ライブ 文字と余白のルール L7「招待状には筆書体」で母集合が[明朝体,ゴシック体]
+  // に閉じ、候補2件で尽きて14回停止）。しかも「間違い選択肢」節の太字見出しが正解語を誤掲載する
+  // ことがある（AIの正解取り違え＝同ライブで筆書体が誤答扱いされ poolOpts からも消えた）ため、
+  // この最終 tier だけは**除外前の全選択肢**から順列を作る。早期候補の誤答除外は維持されるので
+  // 正解が早く来る性質は変わらず、ここは尽きたときの保険（2空欄×4択=計12候補で attemptCap 内）。
+  if (blankCount >= 2 && Array.isArray(options) && options.length >= blankCount) {
+    for (const arr of arrangements(options.slice(0, 5), blankCount)) push(arr);
+  }
   return cands;
 }
 
@@ -856,7 +865,9 @@ export async function clearReview(page, index, opts = {}) {
     // 穴埋めは総当たりが唯一の突破手段のことがある（フィードバック本文に正解語が一切出ない問題＝
     // 実ライブ UIデザインの世界 L3 Q10）。2空欄×4語の順列は12通りで、8回打ち切りだと残り4候補に
     // 届かず停止する → 穴埋めだけ14回（12順列＋導出・学習ぶん）まで許す。
-    const attemptCap = s.isCloze || s.isAdjust ? Math.max(MAX_ATTEMPTS, 14) : MAX_ATTEMPTS;
+    // 穴埋めは全選択肢順列の最終候補まで尽くせるよう 24（5択×2空欄=20順列＋余裕）。
+    // adjust は state 読取りが主経路のため 14 のまま。
+    const attemptCap = s.isCloze ? Math.max(MAX_ATTEMPTS, 24) : s.isAdjust ? Math.max(MAX_ATTEMPTS, 14) : MAX_ATTEMPTS;
     if ((attempts.get(sig) || 0) >= attemptCap) {
       log(`同じ問題（${s.qnum || "?"}）を${attempts.get(sig)}回試しても通過できず停止します。`);
       break;
@@ -907,7 +918,25 @@ export async function clearReview(page, index, opts = {}) {
       // --- 穴埋め: 候補順序をランク生成し“未試行”の候補で埋める。不正解だった順序は記憶して二度と出さない ---
       // 集合が合っていれば順序違い(K!通り)を尽くして必ず正答へ収束＝初回導出が外れても6回ループ停止しない。
       // 学習済み正解（フィードバック由来。単一空欄で有効）があれば最優先候補にする。
-      const learned = corr ? (corr.seq?.length ? corr.seq : corr.text ? [corr.text] : null) : null;
+      let learned = corr ? (corr.seq?.length ? corr.seq : corr.text ? [corr.text] : null) : null;
+      // outer React state の correct_answer が読めればそれを最優先候補にする（解説パースより確実）。
+      // fill の correct_answer は語配列 or 選択肢 index 配列（st.options で語に変換）。
+      if (!learned) {
+        const st = await readCorrectFromState(page, s.questionText);
+        const ca = st?.correct_answer;
+        if (Array.isArray(ca) && ca.length === s.clozeBlanks) {
+          let seq = null;
+          if (ca.every((x) => typeof x === "string")) seq = ca;
+          else if (ca.every((x) => typeof x === "number") && Array.isArray(st.options)) {
+            const mapped = ca.map((i) => st.options[i]);
+            if (mapped.every((w) => typeof w === "string" && w)) seq = mapped;
+          }
+          if (seq) {
+            learned = seq;
+            log(`     （state から正解シーケンス読取: 「${seq.join(" → ")}」）`);
+          }
+        }
+      }
       const cands = buildClozeCandidates(hit?.expl || "", s.options, s.clozeBlanks, learned);
       const tried = clozeTried.get(sig) || new Set();
       const pick = cands.find((c) => !tried.has(c.join("¦")));
@@ -921,7 +950,7 @@ export async function clearReview(page, index, opts = {}) {
           corrected += 1;
           log(`[${s.qnum}]${kindLabel} 再挑戦(${nth}) → 別の順序「${pick.join(" → ")}」で埋め直す`);
         }
-        await answerCloze(page, pick, s.clozeBlanks);
+        await answerCloze(page, pick, s.clozeBlanks, { log });
       } else {
         // 候補を出し尽くした（順序を全通り試して全滅＝充填集合が誤り等）→ 報告し best effort 前進（MAX_ATTEMPTSで停止）。
         unknownList.push(s.qnum);
@@ -1606,6 +1635,70 @@ export async function answerAdjust(page, { fraction = 0.5, value = null, log = (
   return 0;
 }
 
+// 現在の問題の correct_answer を outer ページの React state から直接読む（全形式対応の一般版）。
+// ドリルの問題データは outer の React props に {type, question, options, correct_answer} で居る。
+// questionText と照合して現在の問題のオブジェクトだけを返す（レッスン全問リストが props に居るため必須）。
+// 返り値: { type, correct_answer, options, question } | null。呼び出し側が形式ごとに解釈する。
+export async function readCorrectFromState(page, questionText) {
+  return page
+    .evaluate((qt) => {
+      const seenO = new Set();
+      const qnorm = (s) => String(s || "").replace(/\s+/g, "").replace(/[＿_]{2,}/g, "＿");
+      const target = qnorm(qt).slice(0, 30);
+      const optList = (o) =>
+        Array.isArray(o.options) ? o.options
+        : o.options && Array.isArray(o.options.options) ? o.options.options
+        : null;
+      const isQuiz = (o) => o && typeof o === "object" && typeof o.question === "string" && o.correct_answer !== undefined;
+      const matches = (o) => {
+        if (target.length < 10) return true;
+        const qn = qnorm(o.question);
+        return qn.includes(target) || target.includes(qn.slice(0, 20));
+      };
+      const findQ = (o, d) => {
+        if (!o || typeof o !== "object" || d > 5 || seenO.has(o)) return null;
+        seenO.add(o);
+        if (isQuiz(o) && matches(o)) {
+          return {
+            type: o.type ?? null,
+            correct_answer: JSON.parse(JSON.stringify(o.correct_answer ?? null)),
+            options: optList(o) ? JSON.parse(JSON.stringify(optList(o))) : null,
+            question: String(o.question).slice(0, 80),
+          };
+        }
+        for (const k in o) {
+          if (k === "children" || k.startsWith("__") || k === "stateNode" || k === "return" || k === "alternate") continue;
+          try { const r = findQ(o[k], d + 1); if (r) return r; } catch {}
+        }
+        return null;
+      };
+      let fiber = null;
+      for (const el of document.querySelectorAll("div")) {
+        const k = Object.keys(el).find((x) => x.startsWith("__reactFiber$"));
+        if (k) { fiber = el[k]; break; }
+      }
+      if (!fiber) return null;
+      let root = fiber;
+      while (root.return) root = root.return;
+      const q = [root];
+      const seenF = new Set();
+      let guard = 0;
+      while (q.length && guard++ < 30000) {
+        const f = q.shift();
+        if (!f || seenF.has(f)) continue;
+        seenF.add(f);
+        for (const bag of [f.memoizedProps, f.memoizedState]) {
+          const r = findQ(bag, 0);
+          if (r) return r;
+        }
+        if (f.child) q.push(f.child);
+        if (f.sibling) q.push(f.sibling);
+      }
+      return null;
+    }, questionText || "")
+    .catch(() => null);
+}
+
 // adjust の正解範囲を outer ページの React state から直接読む。
 // ドリルの adjust 判定はクライアント側（correct_answer: {スライダー名: {min,max}}）で行われ、
 // そのデータは outer の React コンポーネント props に居る（iframe へは postMessage で描画設定のみ送る）。
@@ -1662,27 +1755,126 @@ export async function readAdjustCorrect(page) {
     .catch(() => null);
 }
 
-export async function answerCloze(page, sequence = [], blankCount = 1) {
-  const n = Math.max(blankCount, sequence.length || 0) || 1;
-  for (let i = 0; i < n; i++) {
-    const word = sequence[i] ?? null;
-    const tagged = await page.evaluate((w) => {
+// 穴埋めの「実際に空欄へ入った語」を空欄の出現順で読む。空欄エリアは「選択肢から選んでください」
+// 行より上＝そこまでの葉テキストのうち選択肢と一致するものを拾う（チップは指示行の下なので混ざらない）。
+export async function readClozeFilled(page) {
+  return page
+    .evaluate(() => {
       const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
-      const strip = (x) => (x || "").replace(/[-]/g, "");
+      const chips = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')].map((e) => norm(e.textContent));
+      const optSet = new Set(chips.filter(Boolean));
+      const leaves = [...document.querySelectorAll('div[dir="auto"]')].filter((el) => !el.querySelector('div[dir="auto"]'));
+      const filled = [];
+      for (const el of leaves) {
+        const t = norm(el.textContent);
+        if (/選択肢から選/.test(t)) break;
+        if (optSet.has(t)) filled.push(t);
+      }
+      return filled;
+    })
+    .catch(() => []);
+}
+
+export async function answerCloze(page, sequence = [], blankCount = 1, { log = () => {} } = {}) {
+  const n = Math.max(blankCount, sequence.length || 0) || 1;
+  // タップ→検証→必要なら置き直し。実クリックは sticky ヘッダー等で座標が1チップぶんズレることがある
+  // （実ライブ 文字と余白L7: 明朝体を狙うと1つ下の丸ゴシック体が入り、全順列24回不正解＝正解到達不能）。
+  // → 各タップ後に「実際に空欄へ入った語」を読み、違う語が入ったら空欄をタップして排出→
+  //   プログラム的クリック（座標ヒットテスト無し）で置き直す。
+  const strip = (x) => (x || "").replace(/\s+/g, " ").replace(/[-]/g, "").trim();
+  const matches = (placed, wanted) => {
+    if (wanted == null) return true;
+    const o = strip(placed), c = strip(wanted);
+    return o === c || (o.endsWith(c) && o.length - c.length <= 2);
+  };
+  const tapChip = async (w, programmatic) => {
+    const tagged = await page.evaluate((word) => {
+      const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+      const st = (x) => (x || "").replace(/[-]/g, "");
       const els = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
       els.forEach((e) => e.removeAttribute("data-cloze-pick"));
       let el = null;
-      if (w != null) {
-        const c = strip(norm(w));
-        el = els.find((e) => { const o = strip(norm(e.textContent)); return o === c || (o.endsWith(c) && o.length - c.length <= 2); });
+      if (word != null) {
+        const c = st(norm(word));
+        el = els.find((e) => { const o = st(norm(e.textContent)); return o === c || (o.endsWith(c) && o.length - c.length <= 2); });
       }
       el = el || els[0]; // 未指定/不一致は先頭で前進
-      if (el) { el.setAttribute("data-cloze-pick", "1"); return true; }
-      return false;
-    }, word);
-    if (tagged) await page.click('[data-cloze-pick="1"]').catch(() => {});
+      if (!el) return false;
+      el.setAttribute("data-cloze-pick", "1");
+      el.scrollIntoView({ block: "center" }); // 端寄せスクロールの座標ズレを避け中央に出す
+      return true;
+    }, w);
+    if (!tagged) return false;
+    await sleep(250);
+    if (programmatic) {
+      // 座標を使わないクリック（RN Web の Pressability は click イベントにも反応する）
+      await page.evaluate(() => {
+        const el = document.querySelector('[data-cloze-pick="1"]');
+        if (!el) return;
+        for (const type of ["pointerdown", "pointerup", "click"]) {
+          el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+        }
+      }).catch(() => {});
+    } else {
+      await page.click('[data-cloze-pick="1"]').catch(() => {});
+    }
     await sleep(700); // 空欄が埋まり選択肢が並び替わるのを待つ
+    return true;
+  };
+  const countBlanks = () =>
+    page.evaluate(() => ((document.body.innerText || "").match(/[＿_]{2,}/g) || []).length).catch(() => 0);
+  const ejectBlankWord = async (ww) => {
+    // 空欄に入った語（設問エリア側）をタップして排出する（座標を使わないプログラム的クリック）。
+    await page.evaluate((w) => {
+      const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+      const leaves = [...document.querySelectorAll('div[dir="auto"]')].filter((el) => !el.querySelector('div[dir="auto"]'));
+      for (const el of leaves) {
+        const t = norm(el.textContent);
+        if (/選択肢から選/.test(t)) break;
+        if (t === w) {
+          const touch = el.closest("[tabindex]") || el;
+          for (const type of ["pointerdown", "pointerup", "click"]) {
+            touch.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+          }
+          return;
+        }
+      }
+    }, ww).catch(() => {});
+    await sleep(600);
+  };
+  for (let i = 0; i < n; i++) {
+    const word = sequence[i] ?? null;
+    let ok = false;
+    for (let method = 0; method < 2 && !ok; method++) {
+      const blanksBefore = await countBlanks();
+      await tapChip(word, method === 1);
+      const filled = await readClozeFilled(page);
+      const blanksAfter = await countBlanks();
+      if (filled.length >= i + 1) {
+        ok = matches(filled[i], word);
+        if (!ok) {
+          if (method === 0) log(`     （空欄${i + 1}: 「${word ?? "(先頭)"}」を置いたが実際は「${filled[i]}」→ 排出して置き直し）`);
+          await ejectBlankWord(filled[i]); // 誤配置を排出してから次の method で置き直す
+        }
+      } else {
+        // 検証不能型（使用済みチップが消えて語を照合できない等）: 空欄数の減少をもって前進とみなす。
+        // ここで再タップすると二重充填の危険があるため、減っていれば ok とする。
+        ok = blanksAfter < blanksBefore;
+        if (!ok && method === 0) log(`     （空欄${i + 1}: タップが効いていない → プログラム的クリックで再試行）`);
+      }
+    }
   }
+  {
+    const filled = await readClozeFilled(page);
+    if (sequence.length && filled.length) {
+      const want = sequence.slice(0, n).map((w) => w ?? "?").join("→");
+      const got = filled.join("→");
+      if (strip(want) !== strip(got)) log(`     （⚠ 最終配置が意図とズレ: 意図 ${want} / 実際 ${got}）`);
+    }
+  }
+  // 配置診断: 確定直前の画面（＝空欄に実際どの語が入ったか）を毎回上書き保存する。
+  // 「意図した語順で置いたはずなのに全順列不正解」（文字と余白L7）の切り分け用。
+  try { fs.writeFileSync(path.join(__dirname, "drill-dump.cloze-presubmit.html"), await page.content(), "utf-8"); } catch {}
   // 全空欄が埋まると「回答する」が出る → 押して確定。
   await page.waitForSelector('[data-testid="quiz-submit"]', { timeout: 4000 }).catch(() => {});
   await page.click('[data-testid="quiz-submit"]', { timeout: 3000 }).catch(() => {});
