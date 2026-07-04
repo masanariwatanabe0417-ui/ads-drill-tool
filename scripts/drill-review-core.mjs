@@ -308,6 +308,28 @@ export function topOptionByFrequency(hay, options) {
   return best ? best.o : null;
 }
 
+// 解説の「間違い選択肢のどこが違う？」節に太字見出し（**語**：）で登場する選択肢＝確定した誤答語。
+// 正解語が本文に選択肢の表記どおり現れない解説では、この節の太字誤答語だけが唯一の完全一致になり、
+// 出現順走査が誤答集合を“正解”として導出してしまう（実ライブ ネット接続とクラウドの入口 L3 Q6＝
+// 本文は「ルーターか…回線のどちらか」と『側』なしで書く一方、誤答は「**サービス側**：」「**端末側**：」
+// と太字見出しで登場→[サービス側,端末側]を導出・総当たりプールも同集合に閉じて候補2件で尽き8回停止）。
+// 見出し位置（太字＋直後にコロン）に限定するので、節の説明文中に正解語が混ざっても誤検出しない。
+export function wrongOptionsInExplanation(expl, options) {
+  const wrong = new Set();
+  if (!expl || !options?.length) return wrong;
+  const wi = expl.search(/間違い選択肢|どこが違う/);
+  if (wi < 0) return wrong;
+  let section = expl.slice(wi);
+  const nh = section.search(/\n#{2,3}\s/);
+  if (nh > 0) section = section.slice(0, nh);
+  const heads = [...section.matchAll(/\*\*([^*\n]+)\*\*\s*[:：]/g)].map((m) => normLoose(m[1]));
+  for (const o of options) {
+    const full = normLoose(o);
+    if (heads.some((h) => h === full || h === stripParens(full))) wrong.add(o);
+  }
+  return wrong;
+}
+
 // cloze（複数空欄穴埋め）の正解シーケンスを解説本文から導く。
 // 空欄は本文の順にタップ語で埋める（実機観察済み）。公式/保存解説は答えの語を空欄順で言及するため
 // （例「pnpm が…その pnpm 自体は Node.js…」）、各選択肢語の“最初の出現位置”で並べ替えて blankCount 個返す。
@@ -332,6 +354,14 @@ export function extractClozeSequence(expl, options, blankCount) {
       });
       if (filtered.length >= blankCount) opts = filtered;
     }
+  }
+  // 「間違い選択肢」節の太字見出しに載る選択肢＝確定誤答を候補から外す（残りが blankCount 未満に
+  // なる時は消しすぎ防止で外さない）。最終フォールバックの tryOn(noList) は同節を含む全文を走査する
+  // ため、ここで外さないと誤答集合を導出する（実ライブ ネット接続とクラウドの入口 L3 Q6）。
+  const wrongOpts = wrongOptionsInExplanation(expl, opts);
+  if (wrongOpts.size) {
+    const kept = opts.filter((o) => !wrongOpts.has(o));
+    if (kept.length >= blankCount) opts = kept;
   }
   const tryOn = (body) => orderedOptionsInText(body, opts);
   // ⚠ 解説の冒頭には buildAnswerBlock の「選択肢: - A - B …」列挙があり、語が“列挙順”に並ぶ。
@@ -428,10 +458,21 @@ export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
   if (learnedSeq) push(learnedSeq);
   const primary = extractClozeSequence(expl, options, blankCount);
   push(primary);
+  // 学習済み正解（フィードバック由来）の順列も上位候補に足す＝集合は正しく順序だけ読み違えた場合に収束。
+  if (learnedSeq?.length === blankCount) for (const p of permute(learnedSeq)) push(p);
+  // 「間違い選択肢」節の太字見出し＝確定誤答は充填集合・総当たりプールから除外する（残りが blankCount
+  // 未満なら除外しない）。除外しないと、正解語が本文に表記どおり現れない解説で誤答集合に閉じて候補が
+  // 尽きる（実ライブ ネット接続とクラウドの入口 L3 Q6＝候補2件で8回停止）。
+  const wrongOpts = wrongOptionsInExplanation(expl || "", options || []);
+  let poolOpts = options || [];
+  if (wrongOpts.size) {
+    const kept = poolOpts.filter((o) => !wrongOpts.has(o));
+    if (kept.length >= blankCount) poolOpts = kept;
+  }
   // 充填集合＝順列の元。導出が空欄数ぶん取れていればその集合（stem除外済み）、無ければ本文出現順の上位 blankCount。
   let fillSet = primary.length === blankCount ? primary : null;
   if (!fillSet) {
-    const ordered = orderedOptionsInText(expl, options);
+    const ordered = orderedOptionsInText(expl, poolOpts);
     if (ordered.length >= blankCount) fillSet = ordered.slice(0, blankCount);
   }
   if (fillSet && fillSet.length === blankCount) {
@@ -444,8 +485,8 @@ export function buildClozeCandidates(expl, options, blankCount, learnedSeq) {
   // 母集合は blankCount+2 語までに絞り組合せ爆発を防ぐ（出現順で先頭優先＝解説に先に出た組から試す）。
   if (blankCount >= 2 && Array.isArray(options)) {
     const noList = (expl || "").replace(/選択肢[:：]\s*(?:\n\s*[-*・].*)+/g, "");
-    const present = orderedOptionsInText(noList, options);
-    const pool = (present.length >= blankCount ? present : options).slice(0, blankCount + 2);
+    const present = orderedOptionsInText(noList, poolOpts);
+    const pool = (present.length >= blankCount ? present : poolOpts).slice(0, blankCount + 2);
     for (const arr of arrangements(pool, blankCount)) push(arr);
   }
   // 単一空欄は「どの選択肢が入るか」＝実質 N 択。導出（primary）が外れても
@@ -554,6 +595,24 @@ export async function fetchIndex(studyLogApi, log = console.log, { retries = 12,
 
 // 回答後フィードバックの緑枠 rgb(22,163,74) が付いた選択肢テキストを「正解」として読む（自己訂正用）。
 // 選択式/○✕/1空欄cloze はこれで正解1つが取れる。複数空欄clozeは緑が複数＝順序は best effort（seqで返す）。
+// 穴埋めフィードバック本文（マスターのワンポイント等）から正解シーケンスを読む純関数。
+// 単一空欄＝出現頻度最多の語（付随語に負けない）。複数空欄＝出現順で、ちょうど空欄数ならそのまま、
+// 空欄数を超えたら“先頭から空欄数ぶん”を採用する。ワンポイントは正解語を空欄順で先に述べ、誤答語は
+// 末尾の対比文で触れる文型のため（実ライブ ネット接続とクラウドの入口 L3 復習Q5＝「共通の経路である
+// ルーター側 か、その先の 回線側 に問題があります。端末側なら『自分だけ遅い』になるはず」→3語取れて
+// 旧・厳密一致 3≠2 で弾かれ自己訂正できず8回停止）。誤読でも clozeTried の不正解記憶で1回で捨てられる。
+export function clozeSeqFromFeedbackText(fbText, options, blankCount) {
+  if (!fbText || !options?.length || !blankCount) return null;
+  const seg = (fbText.split(/ワンポイント|正しくは|正解は/).pop() || fbText).trim();
+  if (blankCount === 1) {
+    const top = topOptionByFrequency(seg, options) || orderedOptionsInText(seg, options)[0];
+    return top ? [top] : null;
+  }
+  const seq = orderedOptionsInText(seg, options);
+  if (seq.length >= blankCount) return seq.slice(0, blankCount);
+  return null;
+}
+
 export async function readCorrectFromFeedback(page, s) {
   // 線結び/並べ替えは「正解」が複数セルの対応・順序であり、緑枠1セルでは復元できない。
   // 単一セルを誤って学習するとリトライを浪費するため学習せず null を返す（呼び出し側が診断DOMを残す）。
@@ -602,21 +661,10 @@ export async function readCorrectFromFeedback(page, s) {
           return el ? el.innerText || el.textContent || "" : "";
         })
         .catch(() => "");
-      // 正解は「ワンポイント/正解は/正しくは」以降に書かれる。前半（不正解・誤って埋めた語等）を
-      // 落としてその後ろだけを見る（誤答語の混入を避ける）。
-      const seg = (fbText.split(/ワンポイント|正しくは|正解は/).pop() || fbText).trim();
-      if (s.clozeBlanks === 1) {
-        // ⚠ ワンポイント本文には正解語のほか付随的に誤答語も出る（実ライブ Git L4 Q5＝正解『マージ』の
-        // 説明文に『全てのコミットが保存された』と誤答コミットが混ざる）。従来は orderedOptionsInText が
-        // 2語返し『=== clozeBlanks(1)』で弾かれ自己訂正できず6回停止していた。単一空欄は“出現頻度最多
-        // （同数は最先頭）”の語を正解として採る＝付随語に負けない。
-        const top = topOptionByFrequency(seg, s.options) || orderedOptionsInText(seg, s.options)[0];
-        if (top) return { seq: [top] };
-      } else {
-        // 複数空欄は順序が要るので、ちょうど空欄数ぶん取れた時だけ採用（過不足は誤学習回避で null）。
-        const seq = orderedOptionsInText(seg, s.options);
-        if (seq.length === s.clozeBlanks) return { seq };
-      }
+      // 読取ロジックは純関数 clozeSeqFromFeedbackText に集約（単一空欄=頻度最多／複数空欄=出現順
+      // 先頭から空欄数ぶん。文型の根拠と実ライブ事例は関数コメント参照）。
+      const seq = clozeSeqFromFeedbackText(fbText, s.options, s.clozeBlanks);
+      if (seq) return { seq };
     }
     return null;
   }
