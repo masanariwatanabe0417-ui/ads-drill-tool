@@ -30,7 +30,7 @@ import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
 import { readState, sleep, collectThemeColor } from "./drill-dom.mjs";
-import { fetchIndex, clearReview, answerChoice, answerCloze, advanceToNextCourse } from "./drill-review-core.mjs";
+import { fetchIndex, clearReview, answerChoice, answerCloze, answerAdjust, advanceToNextCourse } from "./drill-review-core.mjs";
 import { reportProgress, progressLog } from "./progress-report.mjs";
 
 // 進捗モニター: 予期しない停止も UI に伝える（挙動は従来どおり=表示してから終了）。
@@ -274,15 +274,20 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
   let imported = 0;
 
   for (let i = 0; i < MAX_QUESTIONS; i++) {
-    // 解答ボタンが出るまで待つ（次問の読み込み待ち）
-    await page.waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 }).catch(() => {});
+    // 解答ボタンが出るまで待つ（次問の読み込み待ち）。adjust（スライダー調整）は選択肢ゼロのため指示文も待機条件に含める。
+    await page
+      .waitForFunction(
+        () => document.querySelector('[data-testid^="quiz-answer-option-"]') || /スライダーで調整/.test(document.body.innerText || ""),
+        { timeout: 30000 }
+      )
+      .catch(() => {});
     const s = await readState(page);
     if (!s.qnum) { console.log("Q番号を取得できませんでした。終了します。"); break; }
     if (seen.has(s.qnum)) { console.log(`${s.qnum} は処理済み。進まなくなったため終了します。`); break; }
     seen.add(s.qnum);
 
     const kind = s.isMatching ? "matching" : s.isOrdering ? "ordering" : s.isCloze ? "cloze" : "choice";
-    const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? `[穴埋め×${s.clozeBlanks}]` : "";
+    const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? `[穴埋め×${s.clozeBlanks}]` : s.isAdjust ? "[調整]" : "";
     console.log(
       `[${s.qnum}]${kindLabel} ${s.questionText.slice(0, 40)}…  左=${JSON.stringify(s.options)}` +
         (s.isMatching ? ` 右=${JSON.stringify(s.rightItems)}` : "")
@@ -369,6 +374,9 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
         // cloze（複数空欄）: 空欄を blankCount 個ぶん埋めて確定（取り込みは前進＋公式解説取得が目的。
         // 正解シーケンスは保存解説から復習時に導く）。空欄順に先頭の選択肢を置く best effort。
         await answerCloze(page, [], s.clozeBlanks || s.options.length);
+      } else if (s.isAdjust) {
+        // adjust（スライダー調整・新形式）: iframe 内のスライダーを中央値に設定して回答（前進が目的）。
+        await answerAdjust(page, { fraction: 0.5, log: console.log });
       } else {
         // 選択式: aria付き（○✕・通常4択）と aria無し（「選択肢から選んでください」型）の両対応。
         // 取り込みは常に先頭(index:0)を選んで回答（誤答でも公式解説＋枠色から正解を取得できる）。
@@ -382,6 +390,11 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
     // ONLY フィルタ: 対象外の問は保存せず巡回のみ（解答済みなので次へ進むだけ）。
     if (onlyTargets && !onlyTargets.has(s.qnum)) {
       console.log(`  (ONLY フィルタ: ${s.qnum} は保存スキップ)`);
+    } else {
+    // adjust（スライダー調整）は保存対象外＝巡回のみ（選択肢が無く studyLog 照合・解説生成の前提に
+    // 合わない。スライダーの正解範囲は iframe 内クライアント判定で外から読めない）。課金なし。
+    if (s.isAdjust) {
+      console.log(`  → [調整] 判定: ${a.verdict ?? "?"} / スライダー新形式＝保存対象外（巡回のみ・課金なし）`);
     } else {
     // 並べ替え・マッチング・cloze は正解が単一ラベルでなく解説に正しい順序/対応/穴埋め語が含まれる
     // →解説が取れればOK。通常選択式は correctAnswer（aria か回答後の緑枠）が取れればOK。
@@ -432,6 +445,7 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
       }
       } // end noImport
     }
+    } // end adjust保存対象外
     } // end ONLY フィルタ
 
     // 次へ進む。判定は「次の問題へ」ボタンの有無だけに頼らない（問題種別により遷移ラベルが

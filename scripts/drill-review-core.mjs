@@ -839,7 +839,13 @@ export async function clearReview(page, index, opts = {}) {
         .catch(() => false);
       if (doneNow) { log("（復習なし＝完了画面を検出）"); break; }
     }
-    await page.waitForSelector('[data-testid^="quiz-answer-option-"]', { timeout: 30000 }).catch(() => {});
+    // adjust（スライダー調整）は選択肢ゼロ＝quiz-answer-option が出ないため、スライダー指示文も待機条件に含める。
+    await page
+      .waitForFunction(
+        () => document.querySelector('[data-testid^="quiz-answer-option-"]') || /スライダーで調整/.test(document.body.innerText || ""),
+        { timeout: 30000 }
+      )
+      .catch(() => {});
     const s = await readState(page);
     // 重複判定は Q番号でなく問題文＋選択肢で行う（復習画面は Q番号がスクランブル＝SPA残骸で誤読される
     // ため qnum 基準は不可）。さらに問題文だけだとフィナーレのバナーが questionText に化けて別問題が
@@ -850,7 +856,7 @@ export async function clearReview(page, index, opts = {}) {
     // 穴埋めは総当たりが唯一の突破手段のことがある（フィードバック本文に正解語が一切出ない問題＝
     // 実ライブ UIデザインの世界 L3 Q10）。2空欄×4語の順列は12通りで、8回打ち切りだと残り4候補に
     // 届かず停止する → 穴埋めだけ14回（12順列＋導出・学習ぶん）まで許す。
-    const attemptCap = s.isCloze ? Math.max(MAX_ATTEMPTS, 14) : MAX_ATTEMPTS;
+    const attemptCap = s.isCloze || s.isAdjust ? Math.max(MAX_ATTEMPTS, 14) : MAX_ATTEMPTS;
     if ((attempts.get(sig) || 0) >= attemptCap) {
       log(`同じ問題（${s.qnum || "?"}）を${attempts.get(sig)}回試しても通過できず停止します。`);
       break;
@@ -858,19 +864,35 @@ export async function clearReview(page, index, opts = {}) {
     seen.add(sig);
 
     const hit = lookup(index, s.questionText);
-    const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? "[穴埋め]" : "[選択]";
+    const kindLabel = s.isMatching ? "[線結び]" : s.isOrdering ? "[並べ替え]" : s.isCloze ? "[穴埋め]" : s.isAdjust ? "[調整]" : "[選択]";
 
     let corr = corrections.get(sig);
     // 取り違えガード: 学習済み正解が現在の選択肢に実在しなければ別問題のもの → 破棄して通常経路へ。
     // （sig 厳密化で衝突はほぼ消えるが、万一の取りこぼしでも誤った正解を force-apply してスタックしない）。
-    if (corr && !s.isMatching && !s.isOrdering && !correctionApplies(corr, s.options)) {
+    if (corr && !s.isMatching && !s.isOrdering && !s.isAdjust && !correctionApplies(corr, s.options)) {
       log(`     （学習済み正解「${corr.text ?? (corr.seq || []).join("/")}」は現在の選択肢に無い→別問題と判断し破棄）`);
       corrections.delete(sig);
       corr = null;
     }
     // このイテレーションで穴埋めに使った順序キー（不正解時に記憶するため）。
     let triedClozeKey = null;
-    if (!s.answered && s.isCloze) {
+    if (!s.answered && s.isAdjust) {
+      // --- adjust（スライダー調整・新形式）: studyLog に保存されない（取込は巡回のみ）ため毎回その場で解く。
+      // 学習済み値（フィードバックの px 数値から）があれば絶対値で、無ければ割合スケジュールで
+      // 中央→上下に振って総当たり。「詰まりすぎ→広げる」系は中央値で当たることが多い。
+      const FRACS = [0.5, 0.75, 0.25, 0.875, 0.625, 0.375, 0.125, 1, 0];
+      const nth = (attempts.get(sig) || 0) + 1;
+      if (corr?.adjustValue != null) {
+        corrected += 1;
+        log(`[${s.qnum}]${kindLabel} 学習済み値 ${corr.adjustValue} でスライダーを設定`);
+        await answerAdjust(page, { value: corr.adjustValue, log });
+      } else {
+        const f = FRACS[Math.min(nth - 1, FRACS.length - 1)];
+        if (nth === 1) known += 1; else corrected += 1;
+        log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}スライダーを ${Math.round(f * 100)}% 位置で回答`);
+        await answerAdjust(page, { fraction: f, log });
+      }
+    } else if (!s.answered && s.isCloze) {
       // --- 穴埋め: 候補順序をランク生成し“未試行”の候補で埋める。不正解だった順序は記憶して二度と出さない ---
       // 集合が合っていれば順序違い(K!通り)を尽くして必ず正答へ収束＝初回導出が外れても6回ループ停止しない。
       // 学習済み正解（フィードバック由来。単一空欄で有効）があれば最優先候補にする。
@@ -994,6 +1016,24 @@ export async function clearReview(page, index, opts = {}) {
         } else {
           if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
           log(`     ⚠ 不正解だが「正しい組み合わせ」を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
+        }
+      } else if (s.isAdjust) {
+        // adjust: フィードバック本文に正解値のヒント（例「12〜24pxが読みやすい」）があれば学習する。
+        // 数値が2つ以上なら範囲とみなし中央値、1つならその値。無ければ割合スケジュールで続行。
+        const fbText = await page
+          .evaluate(() => {
+            const el = document.querySelector('[data-testid="quiz-feedback"]');
+            return (el ? el.innerText : "") || "";
+          })
+          .catch(() => "");
+        const nums = [...fbText.matchAll(/(\d+(?:\.\d+)?)\s*(?:px|ピクセル)/g)].map((m) => Number(m[1]));
+        if (nums.length) {
+          const v = nums.length >= 2 ? (nums[0] + nums[1]) / 2 : nums[0];
+          corrections.set(sig, { adjustValue: v });
+          log(`     ✎ 正解値を学習: ${v}（フィードバックの px 数値から・再提示で答え直す）`);
+        } else {
+          if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
+          log(`     （フィードバックに数値ヒント無し → 次は別のスライダー位置を試す。診断DOM保存: review-wrong-${s.qnum || "x"}.html）`);
         }
       } else {
         const learned = await readCorrectFromFeedback(page, s);
@@ -1488,6 +1528,45 @@ export async function answerOrdering(page, s, order = [], log = () => {}) {
 // 出る「回答する」(quiz-submit)を押して確定。sequence が空/不足のときは blankCount 個ぶん、
 // 残っている選択肢を上から埋める（best effort＝未知時の前進用）。各タップで選択肢は並び替わるため
 // 毎回テキスト一致で生DOMから対象を特定する。
+// adjust（スライダー調整）: Diagram WebView（srcdoc iframe）内の input[type=range] を動かして「回答する」。
+// srcdoc iframe は親と同一オリジン扱い＝Playwright の page.frames() から直接評価できる。
+// React 制御の input のため native setter + input/change イベントで確実に state へ反映する。
+// value（絶対値）指定が最優先、無ければ fraction（min..max の割合）で全スライダーを設定。
+// 返り値 = 動かせたスライダー数（0 なら iframe 未ロード等＝呼び出し側でリトライ判断）。
+export async function answerAdjust(page, { fraction = 0.5, value = null, log = () => {} } = {}) {
+  let moved = 0;
+  for (const frame of page.frames()) {
+    const n = await frame
+      .evaluate(
+        ({ frac, val }) => {
+          const inputs = [...document.querySelectorAll('input[type="range"]')];
+          for (const el of inputs) {
+            const min = Number(el.min || 0), max = Number(el.max || 100);
+            const step = Number(el.step || 1) || 1;
+            let v = val != null ? val : min + (max - min) * frac;
+            v = Math.round(v / step) * step;
+            v = Math.max(min, Math.min(max, v));
+            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+            setter.call(el, String(v));
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+          }
+          return inputs.length;
+        },
+        { frac: fraction, val: value }
+      )
+      .catch(() => 0);
+    moved += n || 0;
+  }
+  if (!moved) log("     ⚠ スライダー(input[type=range])が iframe 内に見つかりません");
+  await sleep(600);
+  // スライダーを動かすと「回答する」が活性化する → 押して確定（cloze と同じ確定経路）。
+  await page.waitForSelector('[data-testid="quiz-submit"]', { timeout: 4000 }).catch(() => {});
+  await page.click('[data-testid="quiz-submit"]', { timeout: 3000 }).catch(() => {});
+  await page.getByText("回答する", { exact: true }).first().click({ timeout: 2000 }).catch(() => {});
+  return moved;
+}
+
 export async function answerCloze(page, sequence = [], blankCount = 1) {
   const n = Math.max(blankCount, sequence.length || 0) || 1;
   for (let i = 0; i < n; i++) {

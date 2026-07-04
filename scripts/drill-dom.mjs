@@ -47,7 +47,7 @@ export async function readState(page) {
     for (const el of document.querySelectorAll('div[dir="auto"]')) {
       if (el.querySelector('div[dir="auto"]')) continue;
       const t = norm(el.textContent);
-      if (/選んでください|選択肢から選|正しい順番に並べ|並べてね|タップして接続|正しいか間違いか/.test(t) && t.length <= 30) {
+      if (/選んでください|選択肢から選|正しい順番に並べ|並べてね|タップして接続|正しいか間違いか|スライダーで調整/.test(t) && t.length <= 30) {
         instruction = t;
         break;
       }
@@ -92,6 +92,11 @@ export async function readState(page) {
     const isCloze =
       isSelectPrompt && optEls.length >= 2 && opts.every((o) => !o.aria) && clozeBlanks >= 1;
 
+    // adjust（スライダー調整）: 選択肢が1つも無く、指示「スライダーで調整してください」がある新形式
+    // （2026-07-04 UIデザインの世界 L5「AIスロップの正体」で初遭遇）。スライダー本体は
+    // Diagram WebView（srcdoc iframe）内の input[type=range] で、メインDOMには存在しない。
+    const isAdjust = optEls.length === 0 && /スライダーで調整/.test(document.body.innerText || "");
+
     // Q番号・総数
     let qnum = null, total = null;
     for (const el of document.querySelectorAll("div")) {
@@ -128,7 +133,7 @@ export async function readState(page) {
       //   「HTMLのタグは…それぞれのタグが示す意味を選んでください。」47字）まで丸ごと消え、
       //   questionText 空→保存API 400（必須項目欠落）→未保存→復習で「未知」化して停止する事故になる。
       if (t.length <= 30 && /選んでください|正しいか間違いか/.test(t)) continue;
-      if (t.length <= 30 && /タップして|並べてね|^正しい順番に並べて/.test(t)) continue; // 並べ替え等の指示文
+      if (t.length <= 30 && /タップして|並べてね|^正しい順番に並べて|スライダーで調整/.test(t)) continue; // 並べ替え等の指示文
       if (/^Lesson\s*\d+/i.test(t)) continue;
       if (t.length > questionText.length) questionText = t;
     }
@@ -174,7 +179,7 @@ export async function readState(page) {
       if (i !== -1 && texts[i + 1]) series = texts[i + 1];
     }
 
-    return { options, correctAnswer, isOrdering, isMatching, isCloze, clozeBlanks, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
+    return { options, correctAnswer, isOrdering, isMatching, isCloze, isAdjust, clozeBlanks, rightItems, instruction, qnum, total, questionText, answered, verdict, explanation, contextLabel, title, series };
   });
 }
 
