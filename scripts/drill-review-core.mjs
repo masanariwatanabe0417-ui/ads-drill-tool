@@ -887,10 +887,21 @@ export async function clearReview(page, index, opts = {}) {
         log(`[${s.qnum}]${kindLabel} 学習済み値 ${corr.adjustValue} でスライダーを設定`);
         await answerAdjust(page, { value: corr.adjustValue, log });
       } else {
-        const f = FRACS[Math.min(nth - 1, FRACS.length - 1)];
-        if (nth === 1) known += 1; else corrected += 1;
-        log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}スライダーを ${Math.round(f * 100)}% 位置で回答`);
-        await answerAdjust(page, { fraction: f, log });
+        // まず outer React state から正解範囲を直接読む（読めれば一発正解）。
+        const ca = await readAdjustCorrect(page);
+        const range = ca ? Object.values(ca)[0] : null;
+        if (range) {
+          const v = (range.min + range.max) / 2;
+          corrections.set(sig, { adjustValue: v });
+          if (nth === 1) known += 1; else corrected += 1;
+          log(`[${s.qnum}]${kindLabel} 正解範囲 ${JSON.stringify(ca)} を state から読取 → 値 ${v} で回答`);
+          await answerAdjust(page, { value: v, log });
+        } else {
+          const f = FRACS[Math.min(nth - 1, FRACS.length - 1)];
+          if (nth === 1) known += 1; else corrected += 1;
+          log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}スライダーを ${Math.round(f * 100)}% 位置で回答`);
+          await answerAdjust(page, { fraction: f, log });
+        }
       }
     } else if (!s.answered && s.isCloze) {
       // --- 穴埋め: 候補順序をランク生成し“未試行”の候補で埋める。不正解だった順序は記憶して二度と出さない ---
@@ -1066,6 +1077,17 @@ export async function clearReview(page, index, opts = {}) {
       break;
     }
     if (!clicked) {
+      // 画面にまだ問題が残っている（回答が確定しなかった等）なら「完了」と誤認せず復習を続行して
+      // 再回答する（同一問題は attemptCap で必ず打ち切られるため無限ループにはならない）。
+      // 実ライブ: adjust の確定空振りでフィードバック無し→遷移ボタン無し→誤 break でシリーズ停止した。
+      const stillQuiz = await page
+        .evaluate(() => !!document.querySelector('[data-testid^="quiz-answer-option-"]') || /スライダーで調整/.test(document.body.innerText || ""))
+        .catch(() => false);
+      if (stillQuiz) {
+        log("     （遷移ボタン無し・問題が画面に残存 → 復習を続行して再回答）");
+        await sleep(1500);
+        continue;
+      }
       // どの遷移ボタンも見つからない＝既に完了画面 or 想定外。DOMをダンプして抜ける（診断用）。
       try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-end-${s.qnum}.html`), await page.content(), "utf-8"); } catch {}
       break;
@@ -1534,37 +1556,110 @@ export async function answerOrdering(page, s, order = [], log = () => {}) {
 // value（絶対値）指定が最優先、無ければ fraction（min..max の割合）で全スライダーを設定。
 // 返り値 = 動かせたスライダー数（0 なら iframe 未ロード等＝呼び出し側でリトライ判断）。
 export async function answerAdjust(page, { fraction = 0.5, value = null, log = () => {} } = {}) {
-  let moved = 0;
-  for (const frame of page.frames()) {
-    const n = await frame
-      .evaluate(
-        ({ frac, val }) => {
-          const inputs = [...document.querySelectorAll('input[type="range"]')];
-          for (const el of inputs) {
-            const min = Number(el.min || 0), max = Number(el.max || 100);
-            const step = Number(el.step || 1) || 1;
-            let v = val != null ? val : min + (max - min) * frac;
-            v = Math.round(v / step) * step;
-            v = Math.max(min, Math.min(max, v));
-            const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-            setter.call(el, String(v));
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            el.dispatchEvent(new Event("change", { bubbles: true }));
-          }
-          return inputs.length;
-        },
-        { frac: fraction, val: value }
-      )
-      .catch(() => 0);
-    moved += n || 0;
+  // iframe 再ロード直後はスライダー設定が outer に届かず「回答する」が活性化しないことがある
+  // （実ライブ: デザインの4大原則 L2 復習 Q8 の5回目で確定空振り→フィードバック無し→ループ誤脱落）。
+  // → 設定→確定→フィードバック出現までを1ラウンドとし、確定できなければ設定からやり直す（最大3回）。
+  for (let round = 1; round <= 3; round++) {
+    let moved = 0;
+    for (const frame of page.frames()) {
+      const n = await frame
+        .evaluate(
+          ({ frac, val }) => {
+            const inputs = [...document.querySelectorAll('input[type="range"]')];
+            for (const el of inputs) {
+              const min = Number(el.min || 0), max = Number(el.max || 100);
+              const step = Number(el.step || 1) || 1;
+              let v = val != null ? val : min + (max - min) * frac;
+              v = Math.round(v / step) * step;
+              v = Math.max(min, Math.min(max, v));
+              const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+              setter.call(el, String(v));
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            }
+            return inputs.length;
+          },
+          { frac: fraction, val: value }
+        )
+        .catch(() => 0);
+      moved += n || 0;
+    }
+    if (!moved) {
+      log(`     （スライダー未検出 round${round} → 待って再試行）`);
+      await sleep(1500);
+      continue;
+    }
+    await sleep(600);
+    // スライダーを動かすと「回答する」が活性化する → 押して確定（cloze と同じ確定経路）。
+    await page.waitForSelector('[data-testid="quiz-submit"]', { timeout: 4000 }).catch(() => {});
+    await page.click('[data-testid="quiz-submit"]', { timeout: 3000 }).catch(() => {});
+    await page.getByText("回答する", { exact: true }).first().click({ timeout: 2000 }).catch(() => {});
+    // 確定できたか＝フィードバック出現で検証。出なければスライダー設定からやり直す。
+    const ok = await page
+      .waitForSelector('[data-testid="quiz-feedback"]', { timeout: 5000 })
+      .then(() => true)
+      .catch(() => false);
+    if (ok) return moved;
+    log(`     （回答が確定しない round${round} → スライダー設定からやり直し）`);
   }
-  if (!moved) log("     ⚠ スライダー(input[type=range])が iframe 内に見つかりません");
-  await sleep(600);
-  // スライダーを動かすと「回答する」が活性化する → 押して確定（cloze と同じ確定経路）。
-  await page.waitForSelector('[data-testid="quiz-submit"]', { timeout: 4000 }).catch(() => {});
-  await page.click('[data-testid="quiz-submit"]', { timeout: 3000 }).catch(() => {});
-  await page.getByText("回答する", { exact: true }).first().click({ timeout: 2000 }).catch(() => {});
-  return moved;
+  log("     ⚠ スライダー回答を3回試みたが確定できませんでした");
+  return 0;
+}
+
+// adjust の正解範囲を outer ページの React state から直接読む。
+// ドリルの adjust 判定はクライアント側（correct_answer: {スライダー名: {min,max}}）で行われ、
+// そのデータは outer の React コンポーネント props に居る（iframe へは postMessage で描画設定のみ送る）。
+// → RN Web 要素の __reactFiber$ から fiber ツリーを幅優先で走査し、memoizedProps/State の中の
+//   correct_answer（{min,max} の連想）を探す。見つからなければ null（呼び出し側が総当たりへフォールバック）。
+export async function readAdjustCorrect(page) {
+  return page
+    .evaluate(() => {
+      const seenO = new Set();
+      const isRange = (v) => v && typeof v === "object" && typeof v.min === "number" && typeof v.max === "number";
+      const findCA = (o, d) => {
+        if (!o || typeof o !== "object" || d > 5 || seenO.has(o)) return null;
+        seenO.add(o);
+        if (o.correct_answer !== undefined && o.correct_answer && typeof o.correct_answer === "object") {
+          const ca = o.correct_answer;
+          if (isRange(ca)) return { "": { min: ca.min, max: ca.max } };
+          const keys = Object.keys(ca);
+          if (keys.length && keys.every((k) => isRange(ca[k]))) {
+            const out = {};
+            for (const k of keys) out[k] = { min: ca[k].min, max: ca[k].max };
+            return out;
+          }
+        }
+        for (const k in o) {
+          if (k === "children" || k.startsWith("__") || k === "stateNode" || k === "return" || k === "alternate") continue;
+          try { const r = findCA(o[k], d + 1); if (r) return r; } catch {}
+        }
+        return null;
+      };
+      let fiber = null;
+      for (const el of document.querySelectorAll("div")) {
+        const k = Object.keys(el).find((x) => x.startsWith("__reactFiber$"));
+        if (k) { fiber = el[k]; break; }
+      }
+      if (!fiber) return null;
+      let root = fiber;
+      while (root.return) root = root.return;
+      const q = [root];
+      const seenF = new Set();
+      let guard = 0;
+      while (q.length && guard++ < 30000) {
+        const f = q.shift();
+        if (!f || seenF.has(f)) continue;
+        seenF.add(f);
+        for (const bag of [f.memoizedProps, f.memoizedState]) {
+          const r = findCA(bag, 0);
+          if (r) return r;
+        }
+        if (f.child) q.push(f.child);
+        if (f.sibling) q.push(f.sibling);
+      }
+      return null;
+    })
+    .catch(() => null);
 }
 
 export async function answerCloze(page, sequence = [], blankCount = 1) {

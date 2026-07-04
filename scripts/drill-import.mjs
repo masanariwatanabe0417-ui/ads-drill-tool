@@ -30,7 +30,7 @@ import { fileURLToPath } from "url";
 import readline from "readline";
 import fs from "fs";
 import { readState, sleep, collectThemeColor } from "./drill-dom.mjs";
-import { fetchIndex, clearReview, answerChoice, answerCloze, answerAdjust, advanceToNextCourse } from "./drill-review-core.mjs";
+import { fetchIndex, clearReview, answerChoice, answerCloze, answerAdjust, readAdjustCorrect, advanceToNextCourse } from "./drill-review-core.mjs";
 import { reportProgress, progressLog } from "./progress-report.mjs";
 
 // 進捗モニター: 予期しない停止も UI に伝える（挙動は従来どおり=表示してから終了）。
@@ -375,8 +375,16 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
         // 正解シーケンスは保存解説から復習時に導く）。空欄順に先頭の選択肢を置く best effort。
         await answerCloze(page, [], s.clozeBlanks || s.options.length);
       } else if (s.isAdjust) {
-        // adjust（スライダー調整・新形式）: iframe 内のスライダーを中央値に設定して回答（前進が目的）。
-        await answerAdjust(page, { fraction: 0.5, log: console.log });
+        // adjust（スライダー調整・新形式）: outer React state の正解範囲が読めればその中央値で
+        // 一発正解（復習に回らない）。読めなければスライダー中央値で回答（前進が目的）。
+        const ca = await readAdjustCorrect(page);
+        const range = ca ? Object.values(ca)[0] : null;
+        if (range) {
+          console.log(`  （正解範囲 ${JSON.stringify(ca)} を state から読取）`);
+          await answerAdjust(page, { value: (range.min + range.max) / 2, log: console.log });
+        } else {
+          await answerAdjust(page, { fraction: 0.5, log: console.log });
+        }
       } else {
         // 選択式: aria付き（○✕・通常4択）と aria無し（「選択肢から選んでください」型）の両対応。
         // 取り込みは常に先頭(index:0)を選んで回答（誤答でも公式解説＋枠色から正解を取得できる）。
