@@ -139,6 +139,52 @@ export function extractOrderFromFeedbackText(text) {
   return parts.length >= 2 ? parts : [];
 }
 
+// 誤答後に回答エリア側へ出る「正しい順番」番号付きリストから正解順を取り出す
+// （2026-07-04 実DOM=UIデザインの世界L1復習Q4 review-wrong-Q4.html で確定）。
+// このブロックは quiz-feedback 要素の**外側**に出るためページ全文（body.innerText）を渡すこと。
+// 設問の指示文「正しい順番に並べてください」と誤マッチしないよう、マーカーの直後に「1」が
+// 続く場合だけをリストとみなす。①行ベース（番号が単独行）を優先し、②空白正規化テキストの
+// 「1 項目 2 項目…」形式にフォールバック。番号は 1 から昇順連続のみ信頼、2項目未満は[]。
+export function extractOrderFromCorrectListText(text) {
+  if (!text) return [];
+  // ① 行ベース: 「正しい順番」行 → 「1」行 → 項目行 → 「2」行 → … （innerText の実形式）
+  const lines = String(text).split(/\r?\n/).map((s) => s.trim());
+  const mi = lines.findIndex((l) => /^正しい順[番序][:：]?$/.test(l));
+  if (mi >= 0) {
+    const items = [];
+    let expect = 1;
+    for (let i = mi + 1; i < lines.length; i++) {
+      if (!lines[i]) continue;
+      if (lines[i] !== String(expect)) break;
+      let j = i + 1;
+      while (j < lines.length && !lines[j]) j++;
+      const item = lines[j];
+      if (!item || /^\d+$/.test(item) || /不正解|正解！|ワンポイント/.test(item)) break;
+      items.push(item);
+      expect++;
+      i = j;
+    }
+    if (items.length >= 2) return items;
+  }
+  // ② 空白正規化フォールバック: 「正しい順番 1 ○○ 2 △△ … 不正解...」の一続きテキスト
+  const norm = String(text).replace(/\s+/g, " ");
+  const m = norm.match(/正しい順[番序]\s*[:：]?\s+(?=1\s)/);
+  if (!m) return [];
+  let seg = norm.slice(m.index + m[0].length);
+  seg = seg.split(/不正解|正解！|マスターのワンポイント/)[0];
+  const parts = seg.split(/(?:^|\s)(\d{1,2})\s+/); // ["", "1", 項目, "2", 項目, …]
+  const items = [];
+  let expect = 1;
+  for (let i = 1; i + 1 < parts.length; i += 2) {
+    if (parts[i] !== String(expect)) break;
+    const item = (parts[i + 1] || "").trim();
+    if (!item) break;
+    items.push(item);
+    expect++;
+  }
+  return items.length >= 2 ? items : [];
+}
+
 // 略語ラベル target を候補 cands の中で「トークン（漢字/かな/英数の連なり）の一致数」が最大の1つに
 // 対応づけて index を返す。並べ替えの正解ヒントが略語（「コマンド実行」）で選択肢がフル文
 // （「マイグレーションコマンドを実行する」）のとき、findLoose（包含一致）では取れないのを救う。
@@ -924,10 +970,13 @@ export async function clearReview(page, index, opts = {}) {
             return (el ? el.innerText : document.body.innerText) || "";
           })
           .catch(() => "");
-        const seq = extractOrderFromFeedbackText(fbText);
+        // 「正しい順番」番号リストは quiz-feedback の外（回答エリア側）に出るためページ全文も読む。
+        const pageText = await page.evaluate(() => document.body.innerText || "").catch(() => "");
+        let seq = extractOrderFromCorrectListText(pageText);
+        if (seq.length < 2) seq = extractOrderFromFeedbackText(fbText);
         if (seq.length >= 2) {
           corrections.set(sig, { seq });
-          log(`     ✎ 正解順を学習: 「${seq.join(" → ")}」（フィードバックの“の順”から・再提示で答え直す）`);
+          log(`     ✎ 正解順を学習: 「${seq.join(" → ")}」（フィードバックの正解表示から・再提示で答え直す）`);
         } else {
           if (wrongHtml) { try { fs.writeFileSync(path.join(dumpDir, `drill-dump.review-wrong-${(s.qnum || "x")}.html`), wrongHtml, "utf-8"); } catch {} }
           log(`     ⚠ 不正解だが正解順を読み取れず（診断DOM保存: review-wrong-${s.qnum || "x"}.html）。`);
