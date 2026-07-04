@@ -847,7 +847,11 @@ export async function clearReview(page, index, opts = {}) {
     const sig = questionSig(s.questionText, s.options) || s.qnum || "";
     if (!sig) { log("問題を取得できませんでした。終了します。"); break; }
     // 自己訂正のため「再提示＝即終了」はしない。正解を学習できず周回する場合のみ試行回数で打ち切る。
-    if ((attempts.get(sig) || 0) >= MAX_ATTEMPTS) {
+    // 穴埋めは総当たりが唯一の突破手段のことがある（フィードバック本文に正解語が一切出ない問題＝
+    // 実ライブ UIデザインの世界 L3 Q10）。2空欄×4語の順列は12通りで、8回打ち切りだと残り4候補に
+    // 届かず停止する → 穴埋めだけ14回（12順列＋導出・学習ぶん）まで許す。
+    const attemptCap = s.isCloze ? Math.max(MAX_ATTEMPTS, 14) : MAX_ATTEMPTS;
+    if ((attempts.get(sig) || 0) >= attemptCap) {
       log(`同じ問題（${s.qnum || "?"}）を${attempts.get(sig)}回試しても通過できず停止します。`);
       break;
     }
