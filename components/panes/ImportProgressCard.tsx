@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Activity, AlertTriangle, CheckCircle2, Hand } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { COURSE_ORDER, courseNumber } from "@/lib/courseOrder";
 
 // 取込スクリプトの進捗（/api/import-progress 経由で .import-progress.json を読む）。
 // フィールドはすべて任意（scripts/progress-report.mjs 参照）。
@@ -73,6 +74,11 @@ export default function ImportProgressCard({ progress }: { progress: ImportProgr
   const qNum = parseInt((p.question || "").replace(/\D/g, ""), 10) || 0;
   const pct = p.total && qNum ? Math.min(100, Math.round((qNum / p.total) * 100)) : null;
 
+  // シリーズ内のコース進捗（正本 lib/courseOrder.ts と照合。名前が表に無ければ非表示）
+  const courseNum = p.series && p.course ? courseNumber(p.series, p.course) : null;
+  const courseTotal = p.series ? COURSE_ORDER[p.series.trim()]?.length ?? null : null;
+  const coursePct = courseNum && courseTotal ? Math.min(100, Math.round((courseNum / courseTotal) * 100)) : null;
+
   return (
     <div
       className={cn(
@@ -113,6 +119,19 @@ export default function ImportProgressCard({ progress }: { progress: ImportProgr
           {p.series && <p className="truncate font-semibold">{p.series}</p>}
           {p.course && <p className="truncate">{p.course}</p>}
           {p.lesson && <p className="truncate text-muted-foreground">{p.lesson}</p>}
+        </div>
+      )}
+
+      {/* シリーズ内のコース進捗バー */}
+      {coursePct !== null && (
+        <div className="space-y-0.5">
+          <div className="flex justify-between text-[10px] text-muted-foreground">
+            <span>コース {courseNum}/{courseTotal}</span>
+            <span>シリーズ進捗 {coursePct}%</span>
+          </div>
+          <div className="h-1.5 rounded-full bg-muted overflow-hidden">
+            <div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${coursePct}%` }} />
+          </div>
         </div>
       )}
 

@@ -10,6 +10,15 @@
       ],
       "port": 3000,
       "autoPort": true
+    },
+    {
+      "name": "ads-drill-prod",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "start"
+      ],
+      "port": 3000
     }
   ]
 }
