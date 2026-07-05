@@ -819,6 +819,9 @@ export async function clearReview(page, index, opts = {}) {
   // 3空欄=6順列＋導出/学習ぶんの余地。順列を尽くす前に打ち切らないよう 6→8 に緩和（誤停止を減らすだけで安全側）。
   const MAX_ATTEMPTS = 8;
   let corrected = 0;
+  // 「遷移ボタン無し・問題が残存」で周回し始めた問題は、初回だけDOMを保存する（原因調査用。
+  // Webアプリの鍵と認証L3の8回ループでは証拠DOMが無く、原因特定に保存データからの推理を要した）。
+  const stuckDumped = new Set();
 
   for (let i = 0; i < maxQuestions; i++) {
     // 「復習タイム！」オーバーレイ（＝誤答のみ復習の開始画面）を処理する。
@@ -1123,6 +1126,13 @@ export async function clearReview(page, index, opts = {}) {
         .evaluate(() => !!document.querySelector('[data-testid^="quiz-answer-option-"]') || /スライダーで調整/.test(document.body.innerText || ""))
         .catch(() => false);
       if (stillQuiz) {
+        if (!stuckDumped.has(sig)) {
+          stuckDumped.add(sig);
+          try {
+            fs.writeFileSync(path.join(dumpDir, `drill-dump.review-stuck-${s.qnum || "x"}.html`), await page.content(), "utf-8");
+            log(`     （診断DOM保存: review-stuck-${s.qnum || "x"}.html）`);
+          } catch {}
+        }
         log("     （遷移ボタン無し・問題が画面に残存 → 復習を続行して再回答）");
         await sleep(1500);
         continue;
@@ -1461,12 +1471,15 @@ export async function answerMatching(page, s, pairs = []) {
   // ⚠ 単純なテキスト一致だと同名スロットの先頭ばかり再タップし、2つ目の同名右に接続できず
   //   N/N に届かず確定が出ない→復習を突破できず停止する（HTML構造マスター Lesson3 で 2/3 で停止を実証）。
   //   そこで「同じラベルの未使用スロットを DOM 出現順に1つずつ消費」して接続する。
-  const usedRight = [];
-  for (const [li, rightLabel] of plan) {
-    await page.click(`[data-testid="quiz-answer-option-${li}"]`, { timeout: 5000 }).catch(() => {});
-    await sleep(500);
-    const picked = await page.evaluate(
-      ({ label, used }) => {
+  // ⚠ さらに保存解説の「正しい対応」自体が多対1（同じ右へ2本）に壊れていることがある
+  //   （Webアプリの鍵と認証 L3: 実UIは右3セルの1対1なのに保存対応が同一右×2 → 2本目の
+  //   未使用セルが存在せず 2/3 で確定が出ず、フィードバック無しの同一計画リトライを8回して停止）。
+  //   → ラベル一致セルが尽きた左は後回しにし、最後に「残った未使用セル」へ消去法で接続して
+  //   必ず N/N を成立させる。誤接続でも確定→不正解フィードバックの「正しい組み合わせ」学習→
+  //   再提示で自己訂正する既存経路に乗るので、ここは接続完了を最優先にする。
+  const pickRightCell = async (rightLabel, usedRight, anyUnused) =>
+    page.evaluate(
+      ({ label, used, any }) => {
         const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
         const leftEls = [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')];
         const leftTexts = new Set(leftEls.map((e) => norm(e.textContent)));
@@ -1482,12 +1495,29 @@ export async function answerMatching(page, s, pairs = []) {
           const t = norm(el.textContent);
           if (!t || t.length > 100 || leftTexts.has(t) || SKIP.has(t)) continue;
           const cur = pos++;
-          if (t === label && !used.includes(cur)) { el.setAttribute("data-import-ri", "1"); pickedPos = cur; break; }
+          if (used.includes(cur)) continue;
+          if (any || t === label) { el.setAttribute("data-import-ri", "1"); pickedPos = cur; break; }
         }
         return pickedPos;
       },
-      { label: rightLabel, used: usedRight }
+      { label: rightLabel, used: usedRight, any: !!anyUnused }
     );
+  const usedRight = [];
+  const deferred = [];
+  for (const [li, rightLabel] of plan) {
+    await page.click(`[data-testid="quiz-answer-option-${li}"]`, { timeout: 5000 }).catch(() => {});
+    await sleep(500);
+    const picked = await pickRightCell(rightLabel, usedRight, false);
+    if (picked < 0) { deferred.push([li, rightLabel]); continue; } // 同ラベルの未使用セル無し → 消去法へ後回し
+    usedRight.push(picked);
+    await page.click('[data-import-ri="1"]', { timeout: 5000 }).catch(() => {});
+    await sleep(500);
+  }
+  for (const [li, rightLabel] of deferred) {
+    console.log(`     （右「${rightLabel}」の未使用セルが無い＝保存対応が多対1の疑い → 残りセルへ消去法接続）`);
+    await page.click(`[data-testid="quiz-answer-option-${li}"]`, { timeout: 5000 }).catch(() => {});
+    await sleep(500);
+    const picked = await pickRightCell(rightLabel, usedRight, true);
     if (picked >= 0) usedRight.push(picked);
     await page.click('[data-import-ri="1"]', { timeout: 5000 }).catch(() => {});
     await sleep(500);
