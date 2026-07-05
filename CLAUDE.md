@@ -48,8 +48,18 @@ NavigationPane (w-72) | ScreenshotPane (w-72) | TeacherPane (flex-1) | QuestionP
 
 ## 開発コマンド
 ```bash
-npm run dev   # http://localhost:3000
+npm run dev                        # UI開発時（http://localhost:3000）
+bash scripts/drill-serve-prod.sh   # 取込時はこちら＝本番サーバー:3000（BUILD=1で再ビルド。ソース変更は再ビルドまで反映されない）
 ```
+
+## ドリル取込自動化（scripts/）
+日常の主業務。詳細な運用知見はメモリ（series-batch-import-operations ほか）が正。
+```bash
+SERIES="<シリーズ名>" SKIP_IMPORTED=1 MAX_COURSES=99 GATE_AFTER_COURSE=1 node scripts/drill-import.mjs   # バックグラウンド起動
+bash scripts/import-watcher.sh <取込ログ> scripts/.import-go <状態ファイル> "<シリーズ名>"                  # 自動合図ウォッチャー
+```
+- ユーザー操作は「対象レッスンのQ1表示」の1回だけ。以降は復習の自己訂正・コース間ナビ込みで全自動
+- スクリプト(drill-*.mjs)修正後は必ずプロセス再起動（起動済みnodeは旧コードのまま）
 
 ## ⚠️ 鉄則
 - APIキーは `.env.local` のみ。コード・コミット・mdに絶対書かない（過去に漏洩あり）
