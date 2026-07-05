@@ -813,6 +813,9 @@ export async function clearReview(page, index, opts = {}) {
   const attempts = new Map();
   // 穴埋め専用: sig -> 既に試して不正解だった順序キー(Set)。次回は未試行の候補順序を選ぶ（順序総当たり）。
   const clozeTried = new Map();
+  // adjust専用: sig -> 既に試した値/割合キー(Set)。誤候補が「確定はする」ため同値ループに入るのを防ぐ
+  // （UIを診断する力L6: 別問のgap範囲12→不正解→学習値14を毎回再学習→同値14回で停止、の実発生を根治）。
+  const adjustTried = new Map();
   // 3空欄=6順列＋導出/学習ぶんの余地。順列を尽くす前に打ち切らないよう 6→8 に緩和（誤停止を減らすだけで安全側）。
   const MAX_ATTEMPTS = 8;
   let corrected = 0;
@@ -889,40 +892,38 @@ export async function clearReview(page, index, opts = {}) {
     let triedClozeKey = null;
     if (!s.answered && s.isAdjust) {
       // --- adjust（スライダー調整・新形式）: studyLog に保存されない（取込は巡回のみ）ため毎回その場で解く。
-      // 学習済み値（フィードバックの px 数値から）があれば絶対値で、無ければ割合スケジュールで
-      // 中央→上下に振って総当たり。「詰まりすぎ→広げる」系は中央値で当たることが多い。
+      // 候補値を「学習値 → state候補（複数＝同一レッスンにadjust複数問の別問範囲を含む）→ 割合スケジュール」
+      // の順に組み、adjustTried の記憶で不正解/既試行の値を二度と出さない（穴埋めの順序総当たりと同方式）。
+      // 誤候補でも「確定」自体はする（不正解になるだけ）ため、確定成否だけでは次候補へ進めない点に注意。
       const FRACS = [0.5, 0.75, 0.25, 0.875, 0.625, 0.375, 0.125, 1, 0];
       const nth = (attempts.get(sig) || 0) + 1;
-      if (corr?.adjustValue != null) {
-        corrected += 1;
-        log(`[${s.qnum}]${kindLabel} 学習済み値 ${corr.adjustValue} でスライダーを設定`);
-        await answerAdjust(page, { value: corr.adjustValue, log });
-      } else {
-        // まず outer React state から正解範囲を直接読む（読めれば一発正解）。
-        // 候補は複数返る（同一レッスンに adjust が2問ある場合、先頭候補は別問の範囲のことがある）
-        // → 確定できるまで候補を順に試し、全滅なら割合スケジュールへ。
-        const cas = await readAdjustCorrect(page);
-        let confirmed = 0;
-        for (const ca of cas) {
-          const range = Object.values(ca)[0];
-          if (!range) continue;
-          const v = (range.min + range.max) / 2;
-          log(`[${s.qnum}]${kindLabel} 正解範囲 ${JSON.stringify(ca)} を state から読取 → 値 ${v} で回答`);
-          confirmed = await answerAdjust(page, { value: v, log });
-          if (confirmed) {
-            corrections.set(sig, { adjustValue: v });
-            if (nth === 1) known += 1; else corrected += 1;
-            break;
-          }
-          log(`     （この範囲では確定せず → 次候補）`);
-        }
-        if (!confirmed) {
-          const f = FRACS[Math.min(nth - 1, FRACS.length - 1)];
-          if (nth === 1) known += 1; else corrected += 1;
-          log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}スライダーを ${Math.round(f * 100)}% 位置で回答`);
-          await answerAdjust(page, { fraction: f, log });
-        }
+      const tried = adjustTried.get(sig) || new Set();
+      adjustTried.set(sig, tried);
+      const plan = [];
+      if (corr?.adjustValue != null) plan.push({ value: corr.adjustValue, label: `学習済み値 ${corr.adjustValue}` });
+      const cas = await readAdjustCorrect(page);
+      for (const ca of cas) {
+        const range = Object.values(ca)[0];
+        if (!range) continue;
+        plan.push({ value: (range.min + range.max) / 2, label: `正解範囲 ${JSON.stringify(ca)} の中央値` });
       }
+      for (const f of FRACS) plan.push({ fraction: f, label: `${Math.round(f * 100)}% 位置` });
+      if (nth === 1) known += 1; else corrected += 1;
+      let confirmed = 0;
+      for (const p of plan) {
+        const k = p.value != null ? `v:${p.value}` : `f:${p.fraction}`;
+        if (tried.has(k)) continue;
+        tried.add(k);
+        log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}${p.label} で回答`);
+        confirmed = await answerAdjust(page, p.value != null ? { value: p.value, log } : { fraction: p.fraction, log });
+        if (confirmed) {
+          if (p.value != null) corrections.set(sig, { adjustValue: p.value });
+          else corrections.delete(sig); // 割合で当てに行く回は古い学習値を引きずらない
+          break;
+        }
+        log(`     （確定せず → 次候補）`);
+      }
+      if (!confirmed) log(`     ⚠ 調整の未試行候補が尽きました（確定できず）`);
     } else if (!s.answered && s.isCloze) {
       // --- 穴埋め: 候補順序をランク生成し“未試行”の候補で埋める。不正解だった順序は記憶して二度と出さない ---
       // 集合が合っていれば順序違い(K!通り)を尽くして必ず正答へ収束＝初回導出が外れても6回ループ停止しない。
