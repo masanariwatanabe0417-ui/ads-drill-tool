@@ -484,8 +484,20 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
         }
       }
       if (!advanced) {
-        console.log(`  ⚠ 次へ進むボタンが見つかりません（${s.qnum}/${s.total}）。レッスン終了とみなします。`);
         try { fs.writeFileSync(path.join(__dirnameEarly, `drill-dump.no-next-${s.qnum}.html`), await page.content(), "utf-8"); } catch {}
+        // 偽レッスン終了の防御: 中間問（qn < total）で遷移ボタンが無いのに、画面にまだ問題が
+        // 残っている（Q番号/総数ヘッダ＋回答UI or フィードバック表示）なら、それはレッスン終了で
+        // なく「前進不能」の異常（例: adjust確定不能で Q5/12 停止＝シリーズ⑤で実発生）。
+        // 静かに次レッスンへ進むと欠落が広がるため、ここで全体停止する（スキップせず停止の方針）。
+        const s2 = await readState(page).catch(() => null);
+        const stillOnQuestion = !!(s2 && s2.qnum && s2.total &&
+          (s2.options.length > 0 || s2.isAdjust || (s2.clozeBlanks || 0) > 0 || s2.answered));
+        if (stillOnQuestion) {
+          console.log(`  ✗ 偽レッスン終了を検出: 遷移ボタン無しのまま問題画面が残存（${s2.qnum}/${s2.total}）。診断DOM=drill-dump.no-next-${s.qnum}.html → 停止します`);
+          reportProgress({ message: `偽レッスン終了を検出（${s2.qnum}/${s2.total}）→ 停止` });
+          throw new Error(`偽レッスン終了: 遷移ボタン無し・問題残存 ${s2.qnum}/${s2.total}（診断DOM: drill-dump.no-next-${s.qnum}.html）`);
+        }
+        console.log(`  ⚠ 次へ進むボタンが見つかりません（${s.qnum}/${s.total}）。レッスン終了とみなします。`);
         break;
       }
       await sleep(1200);
