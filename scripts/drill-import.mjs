@@ -376,14 +376,23 @@ async function importLesson({ series, course, lesson, noImport = NO_IMPORT, save
         await answerCloze(page, [], s.clozeBlanks || s.options.length);
       } else if (s.isAdjust) {
         // adjust（スライダー調整・新形式）: outer React state の正解範囲が読めればその中央値で
-        // 一発正解（復習に回らない）。読めなければスライダー中央値で回答（前進が目的）。
-        const ca = await readAdjustCorrect(page);
-        const range = ca ? Object.values(ca)[0] : null;
-        if (range) {
+        // 一発正解（復習に回らない）。候補は複数返る（同一レッスンに adjust 2問で別問の範囲を
+        // 掴むことがある）→ 確定できるまで候補を順に試し、全滅なら割合スイープで前進。
+        const cas = await readAdjustCorrect(page);
+        let confirmed = 0;
+        for (const ca of cas) {
+          const range = Object.values(ca)[0];
+          if (!range) continue;
           console.log(`  （正解範囲 ${JSON.stringify(ca)} を state から読取）`);
-          await answerAdjust(page, { value: (range.min + range.max) / 2, log: console.log });
-        } else {
-          await answerAdjust(page, { fraction: 0.5, log: console.log });
+          confirmed = await answerAdjust(page, { value: (range.min + range.max) / 2, log: console.log });
+          if (confirmed) break;
+          console.log(`  （この範囲では確定せず → 次候補）`);
+        }
+        if (!confirmed) {
+          for (const f of [0.5, 0.75, 0.25, 0.9, 0.1]) {
+            confirmed = await answerAdjust(page, { fraction: f, log: console.log });
+            if (confirmed) break;
+          }
         }
       } else {
         // 選択式: aria付き（○✕・通常4択）と aria無し（「選択肢から選んでください」型）の両対応。

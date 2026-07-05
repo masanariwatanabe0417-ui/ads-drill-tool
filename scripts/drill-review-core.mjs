@@ -899,15 +899,24 @@ export async function clearReview(page, index, opts = {}) {
         await answerAdjust(page, { value: corr.adjustValue, log });
       } else {
         // まず outer React state から正解範囲を直接読む（読めれば一発正解）。
-        const ca = await readAdjustCorrect(page);
-        const range = ca ? Object.values(ca)[0] : null;
-        if (range) {
+        // 候補は複数返る（同一レッスンに adjust が2問ある場合、先頭候補は別問の範囲のことがある）
+        // → 確定できるまで候補を順に試し、全滅なら割合スケジュールへ。
+        const cas = await readAdjustCorrect(page);
+        let confirmed = 0;
+        for (const ca of cas) {
+          const range = Object.values(ca)[0];
+          if (!range) continue;
           const v = (range.min + range.max) / 2;
-          corrections.set(sig, { adjustValue: v });
-          if (nth === 1) known += 1; else corrected += 1;
           log(`[${s.qnum}]${kindLabel} 正解範囲 ${JSON.stringify(ca)} を state から読取 → 値 ${v} で回答`);
-          await answerAdjust(page, { value: v, log });
-        } else {
+          confirmed = await answerAdjust(page, { value: v, log });
+          if (confirmed) {
+            corrections.set(sig, { adjustValue: v });
+            if (nth === 1) known += 1; else corrected += 1;
+            break;
+          }
+          log(`     （この範囲では確定せず → 次候補）`);
+        }
+        if (!confirmed) {
           const f = FRACS[Math.min(nth - 1, FRACS.length - 1)];
           if (nth === 1) known += 1; else corrected += 1;
           log(`[${s.qnum}]${kindLabel} ${nth === 1 ? "" : `再挑戦(${nth}) `}スライダーを ${Math.round(f * 100)}% 位置で回答`);
@@ -1602,9 +1611,15 @@ export async function answerAdjust(page, { fraction = 0.5, value = null, log = (
               v = Math.round(v / step) * step;
               v = Math.max(min, Math.min(max, v));
               const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-              setter.call(el, String(v));
-              el.dispatchEvent(new Event("input", { bubbles: true }));
-              el.dispatchEvent(new Event("change", { bubbles: true }));
+              const fire = (x) => {
+                setter.call(el, String(x));
+                el.dispatchEvent(new Event("input", { bubbles: true }));
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+              };
+              // 目標値が現在値と同じだと「動かしていない」扱いで確定が活性化しないUIがある
+              // （UIを診断する力L6 Q5: 初期12pxに対し目標12）→ 一度別の値を経由して必ず変化を発火させる
+              if (Number(el.value) === v) fire(v === min ? max : min);
+              fire(v);
             }
             return inputs.length;
           },
@@ -1704,55 +1719,62 @@ export async function readCorrectFromState(page, questionText) {
 // そのデータは outer の React コンポーネント props に居る（iframe へは postMessage で描画設定のみ送る）。
 // → RN Web 要素の __reactFiber$ から fiber ツリーを幅優先で走査し、memoizedProps/State の中の
 //   correct_answer（{min,max} の連想）を探す。見つからなければ null（呼び出し側が総当たりへフォールバック）。
+// レッスンの props には全問ぶんの correct_answer が居るため、最初の1件だけ返すと
+// 「1レッスンに adjust が2問」で別問の範囲を掴む（UIを診断する力 L6 Q4=gap/Q5=見出しサイズで実発生）。
+// → 見つかった候補を出現順に全部返し、呼び出し側が確定できるまで順に試す。
 export async function readAdjustCorrect(page) {
   return page
     .evaluate(() => {
       const seenO = new Set();
       const isRange = (v) => v && typeof v === "object" && typeof v.min === "number" && typeof v.max === "number";
+      const found = [];
+      const seenKey = new Set();
       const findCA = (o, d) => {
-        if (!o || typeof o !== "object" || d > 5 || seenO.has(o)) return null;
+        if (!o || typeof o !== "object" || d > 5 || seenO.has(o)) return;
         seenO.add(o);
         if (o.correct_answer !== undefined && o.correct_answer && typeof o.correct_answer === "object") {
           const ca = o.correct_answer;
-          if (isRange(ca)) return { "": { min: ca.min, max: ca.max } };
-          const keys = Object.keys(ca);
-          if (keys.length && keys.every((k) => isRange(ca[k]))) {
-            const out = {};
-            for (const k of keys) out[k] = { min: ca[k].min, max: ca[k].max };
-            return out;
+          let out = null;
+          if (isRange(ca)) out = { "": { min: ca.min, max: ca.max } };
+          else {
+            const keys = Object.keys(ca);
+            if (keys.length && keys.every((k) => isRange(ca[k]))) {
+              out = {};
+              for (const k of keys) out[k] = { min: ca[k].min, max: ca[k].max };
+            }
+          }
+          if (out) {
+            const sig = JSON.stringify(out);
+            if (!seenKey.has(sig)) { seenKey.add(sig); found.push(out); }
           }
         }
         for (const k in o) {
           if (k === "children" || k.startsWith("__") || k === "stateNode" || k === "return" || k === "alternate") continue;
-          try { const r = findCA(o[k], d + 1); if (r) return r; } catch {}
+          try { findCA(o[k], d + 1); } catch {}
         }
-        return null;
       };
       let fiber = null;
       for (const el of document.querySelectorAll("div")) {
         const k = Object.keys(el).find((x) => x.startsWith("__reactFiber$"));
         if (k) { fiber = el[k]; break; }
       }
-      if (!fiber) return null;
+      if (!fiber) return [];
       let root = fiber;
       while (root.return) root = root.return;
       const q = [root];
       const seenF = new Set();
       let guard = 0;
-      while (q.length && guard++ < 30000) {
+      while (q.length && guard++ < 30000 && found.length < 8) {
         const f = q.shift();
         if (!f || seenF.has(f)) continue;
         seenF.add(f);
-        for (const bag of [f.memoizedProps, f.memoizedState]) {
-          const r = findCA(bag, 0);
-          if (r) return r;
-        }
+        for (const bag of [f.memoizedProps, f.memoizedState]) findCA(bag, 0);
         if (f.child) q.push(f.child);
         if (f.sibling) q.push(f.sibling);
       }
-      return null;
+      return found;
     })
-    .catch(() => null);
+    .catch(() => []);
 }
 
 // 穴埋めの「実際に空欄へ入った語」を空欄の出現順で読む。空欄エリアは「選択肢から選んでください」
