@@ -1768,7 +1768,14 @@ export async function readClozeFilled(page) {
       for (const el of leaves) {
         const t = norm(el.textContent);
         if (/選択肢から選/.test(t)) break;
-        if (optSet.has(t)) filled.push(t);
+        if (optSet.has(t)) { filled.push(t); continue; }
+        // 空欄が独立divでなく文中の<span>として描画されるUI（文字と余白L7で実証）:
+        // 文リーフの中から選択肢と完全一致するspanを出現順に拾う
+        for (const sp of el.querySelectorAll("span")) {
+          if (sp.querySelector("span")) continue;
+          const ts = norm(sp.textContent);
+          if (optSet.has(ts)) filled.push(ts);
+        }
       }
       return filled;
     })
@@ -1782,11 +1789,18 @@ export async function answerCloze(page, sequence = [], blankCount = 1, { log = (
   // → 各タップ後に「実際に空欄へ入った語」を読み、違う語が入ったら空欄をタップして排出→
   //   プログラム的クリック（座標ヒットテスト無し）で置き直す。
   const strip = (x) => (x || "").replace(/\s+/g, " ").replace(/[-]/g, "").trim();
-  const matches = (placed, wanted) => {
+  const matches = (placed, wanted, otherOpts = null) => {
     if (wanted == null) return true;
     const o = strip(placed), c = strip(wanted);
-    return o === c || (o.endsWith(c) && o.length - c.length <= 2);
+    if (o === c) return true;
+    // 置かれた語が「別の選択肢そのもの」なら誤配置（丸ゴシック体 endsWith ゴシック体 の偽OK防止）
+    if (otherOpts && otherOpts.has(o)) return false;
+    return o.endsWith(c) && o.length - c.length <= 2;
   };
+  const readChipTexts = () =>
+    page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid^="quiz-answer-option-"]')].map((e) => (e.textContent || "").replace(/\s+/g, " ").trim())
+    ).catch(() => []);
   const tapChip = async (w, programmatic) => {
     const tagged = await page.evaluate((word) => {
       const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
@@ -1796,7 +1810,10 @@ export async function answerCloze(page, sequence = [], blankCount = 1, { log = (
       let el = null;
       if (word != null) {
         const c = st(norm(word));
-        el = els.find((e) => { const o = st(norm(e.textContent)); return o === c || (o.endsWith(c) && o.length - c.length <= 2); });
+        // 完全一致を最優先。あいまい一致(endsWith)は完全一致チップが存在しない時のみ。
+        // （「ゴシック体」狙いで「丸ゴシック体」がendsWith一致し先に拾われる衝突の根治＝文字と余白L7）
+        el = els.find((e) => st(norm(e.textContent)) === c)
+          || els.find((e) => { const o = st(norm(e.textContent)); return o.endsWith(c) && o.length - c.length <= 2; });
       }
       el = el || els[0]; // 未指定/不一致は先頭で前進
       if (!el) return false;
@@ -1828,20 +1845,39 @@ export async function answerCloze(page, sequence = [], blankCount = 1, { log = (
     await page.evaluate((w) => {
       const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
       const leaves = [...document.querySelectorAll('div[dir="auto"]')].filter((el) => !el.querySelector('div[dir="auto"]'));
+      const fire = (touch) => {
+        for (const type of ["pointerdown", "pointerup", "click"]) {
+          touch.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+        }
+      };
       for (const el of leaves) {
         const t = norm(el.textContent);
         if (/選択肢から選/.test(t)) break;
         if (t === w) {
-          const touch = el.closest("[tabindex]") || el;
-          for (const type of ["pointerdown", "pointerup", "click"]) {
-            touch.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
-          }
+          fire(el.closest("[tabindex]") || el);
           return;
+        }
+        // 文中<span>型の空欄（文字と余白L7のUI）: spanそのものがタップ対象
+        for (const sp of el.querySelectorAll("span")) {
+          if (sp.querySelector("span")) continue;
+          if (norm(sp.textContent) === w) {
+            fire(sp);
+            return;
+          }
         }
       }
     }, ww).catch(() => {});
     await sleep(600);
   };
+  // 前回試行の残骸（排出失敗で空欄に残った語）があれば先に排出してから置き始める
+  for (let g = 0; g < n + 2; g++) {
+    const residue = await readClozeFilled(page);
+    if (!residue.length) break;
+    await ejectBlankWord(residue[0]);
+    const after = await readClozeFilled(page);
+    if (after.length >= residue.length) break; // 排出が効かないUI → そのまま進む
+    log(`     （前試行の残骸「${residue[0]}」を排出）`);
+  }
   for (let i = 0; i < n; i++) {
     const word = sequence[i] ?? null;
     let ok = false;
@@ -1851,7 +1887,8 @@ export async function answerCloze(page, sequence = [], blankCount = 1, { log = (
       const filled = await readClozeFilled(page);
       const blanksAfter = await countBlanks();
       if (filled.length >= i + 1) {
-        ok = matches(filled[i], word);
+        const chipSet = new Set((await readChipTexts()).map(strip));
+        ok = matches(filled[i], word, chipSet);
         if (!ok) {
           if (method === 0) log(`     （空欄${i + 1}: 「${word ?? "(先頭)"}」を置いたが実際は「${filled[i]}」→ 排出して置き直し）`);
           await ejectBlankWord(filled[i]); // 誤配置を排出してから次の method で置き直す
