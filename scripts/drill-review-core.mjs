@@ -1115,6 +1115,26 @@ export async function clearReview(page, index, opts = {}) {
       if (!(await clickFirstVisible(touch, { force: true }))) {
         await txt.first().click({ force: true }).catch(() => {});
       }
+      // ⚠ force クリックでも遷移しない事故がある: force は覆いを「貫通」せず実座標に発火する
+      //   だけなので、覆い要素がヒットを奪うと何度押しても効かない（React—Hooks編 L4復習で
+      //   「結果を見る」8連続不発→コース終端と誤判定を実証。dump: review-complete.html）。
+      //   フィードバックが出たままラベルが残っていれば、touchable に合成マウスイベントを直接
+      //   ディスパッチして React のハンドラを直叩きする（ヒットテスト非依存の最終手段）。
+      await sleep(400);
+      await page.evaluate((label) => {
+        if (!document.querySelector('[data-testid="quiz-feedback"]')) return false; // 遷移済みなら何もしない
+        const norm = (x) => (x || "").replace(/\s+/g, " ").trim();
+        for (const el of document.querySelectorAll('[tabindex="0"]')) {
+          if (norm(el.textContent) !== label) continue;
+          const r = el.getBoundingClientRect();
+          if (r.width === 0 || r.height === 0) continue; // 残骸（非表示）はスキップ
+          for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+            el.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }));
+          }
+          return true;
+        }
+        return false;
+      }, lab).catch(() => {});
       clicked = lab;
       break;
     }
