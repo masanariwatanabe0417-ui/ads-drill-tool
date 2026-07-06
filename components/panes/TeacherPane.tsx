@@ -313,6 +313,23 @@ function saveCache(term: string, defs: string[], consolidated: string) {
   } catch {}
 }
 
+// 単語帳を開いた直後、キャッシュ未作成のカード全部が一斉に統合APIを叩くと
+// fetch失敗（Failed to fetch）が出るため、同時実行を絞る簡易キュー。
+let consolidateActive = 0;
+const consolidateWaiters: (() => void)[] = [];
+async function withConsolidateSlot<T>(fn: () => Promise<T>): Promise<T> {
+  while (consolidateActive >= 4) {
+    await new Promise<void>((resolve) => consolidateWaiters.push(resolve));
+  }
+  consolidateActive++;
+  try {
+    return await fn();
+  } finally {
+    consolidateActive--;
+    consolidateWaiters.shift()?.();
+  }
+}
+
 // ── マーカー（任意範囲ハイライト）共通基盤 ───────────────────────────
 // 単語帳（GlossaryHighlight）とまとめ（SummaryHighlight）で共有する。
 const HL_CTX = 20; // アンカーの前後文脈として保持する文字数
@@ -585,20 +602,27 @@ function GlossaryCard({
     if (didRun.current) return;
     didRun.current = true;
 
+    let cancelled = false; // 単語帳を離れたら、順番待ちのカードはAPIを叩かず終わる
     setConsolidating(true);
-    aiFetch("/api/glossary-consolidate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ term: term.term, definitions: term.definitions }),
+    withConsolidateSlot(async () => {
+      if (cancelled) return null;
+      const r = await aiFetch("/api/glossary-consolidate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ term: term.term, definitions: term.definitions }),
+      });
+      return r.json();
     })
-      .then((r) => r.json())
-      .then(({ consolidated: c }) => {
+      .then((data) => {
+        const c = data?.consolidated;
         if (c) {
           saveCache(term.term, term.definitions, c);
           setConsolidated(c);
         }
       })
+      .catch(() => {}) // 失敗時は統合前の複数定義表示のまま（次回開いたとき再試行される）
       .finally(() => setConsolidating(false));
+    return () => { cancelled = true; };
   }, [term, consolidated]);
 
   const displayDefs =
@@ -904,11 +928,6 @@ function LessonSummary({
           />
         </div>
       </div>
-      {lesson.diagramHtml ? (
-        <HtmlDiagram html={lesson.diagramHtml} />
-      ) : (
-        lesson.diagram && <MermaidDiagram code={lesson.diagram} />
-      )}
       <div className="space-y-3">
         {lesson.questions.map((q) => {
           const scope = `kl:${view.courseKey}__${view.lessonName}__${q.questionInfo}`;
@@ -922,6 +941,12 @@ function LessonSummary({
           );
         })}
       </div>
+      {/* 図解はテキストの後ろに置く（図解を作ってもまとめ本文がそのまま読めるように） */}
+      {lesson.diagramHtml ? (
+        <HtmlDiagram html={lesson.diagramHtml} />
+      ) : (
+        lesson.diagram && <MermaidDiagram code={lesson.diagram} />
+      )}
       {marker}
     </div>
   );
@@ -984,11 +1009,6 @@ function CourseSummary({
         onRemoveHighlight={onRemoveHighlight}
         unitLabel={isLecture ? "講義" : "コース"}
       />
-      {course.diagramHtml ? (
-        <HtmlDiagram html={course.diagramHtml} />
-      ) : (
-        course.diagram && <MermaidDiagram code={course.diagram} />
-      )}
       {course.lessons.map((lesson) => (
         <div key={lesson.lessonName} className="space-y-2">
           <h3 className="text-sm font-semibold text-foreground border-b pb-1">
@@ -1011,6 +1031,12 @@ function CourseSummary({
           </div>
         </div>
       ))}
+      {/* 図解はテキストの後ろに置く（図解を作ってもまとめ本文がそのまま読めるように） */}
+      {course.diagramHtml ? (
+        <HtmlDiagram html={course.diagramHtml} />
+      ) : (
+        course.diagram && <MermaidDiagram code={course.diagram} />
+      )}
       {marker}
     </div>
   );

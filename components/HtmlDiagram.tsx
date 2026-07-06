@@ -43,12 +43,14 @@ export default function HtmlDiagram({ html }: { html: string }) {
           別タブで開く / PDF
         </button>
       </div>
+      {/* pointer-events-none: iframeがホイールを吸って親ペインがスクロールできなくなるのを防ぐ。
+          図は静的（クリック操作なし）なので埋め込み表示では問題ない。操作は「別タブで開く」で。 */}
       <iframe
         ref={iframeRef}
         srcDoc={html}
         title="図解"
         sandbox="allow-scripts allow-popups allow-modals allow-downloads"
-        className="w-full rounded-lg border bg-white"
+        className="w-full rounded-lg border bg-white pointer-events-none"
         style={{ height }}
       />
     </div>

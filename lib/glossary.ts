@@ -46,8 +46,9 @@ function toKatakana(s: string): string {
   );
 }
 
-// 用語の「読みキー」を返す。
-// - 英字主体 + 括弧内ふりがな → 括弧内を読みにする (例: "conflict(コンフリクト)" → "コンフリクト")
+// 用語の「読みキー」を返す（あいうえお順ソート用）。
+// - 括弧内がかな（ふりがな） → 括弧内を読みにする (例: "変更履歴(へんこうりれき)" → "ヘンコウリレキ")
+// - 英字主体 + 括弧内 → 括弧内を読みにする (例: "conflict(コンフリクト)" → "コンフリクト")
 // - それ以外 → 括弧前の本体 (例: "マージ(merge)" → "マージ")
 // - 括弧なし → そのまま
 function readingKey(term: string): string {
@@ -55,15 +56,25 @@ function readingKey(term: string): string {
   if (m) {
     const head = m[1].trim();
     const inside = m[2].trim();
+    if (inside && /^[ぁ-ゖァ-ヶー・\s]+$/.test(inside)) return toKatakana(inside);
     if (/^[A-Za-z0-9.\-\s]+$/.test(head) && inside) return toKatakana(inside);
     return toKatakana(head);
   }
   return toKatakana(term.trim());
 }
 
-// 重複判定キー: 読みキーを小文字化して統一（"マージ" と "マージ(merge)" を同一視）
+// 重複判定キー: 従来どおり「漢字用語は本体・英字用語は括弧内読み」を小文字化して統一
+// （"マージ" と "マージ(merge)" を同一視）。ソート用の readingKey とは別物にしてある：
+// ふりがなを重複判定に使うと同音異義語（例: 移行/以降）まで統合されてしまうため。
 function dedupeKey(term: string): string {
-  return readingKey(term).toLowerCase();
+  const m = term.match(/^\s*([^(（]+?)\s*[(（]([^)）]*)[)）]/);
+  if (m) {
+    const head = m[1].trim();
+    const inside = m[2].trim();
+    if (/^[A-Za-z0-9.\-\s]+$/.test(head) && inside) return toKatakana(inside).toLowerCase();
+    return toKatakana(head).toLowerCase();
+  }
+  return toKatakana(term.trim()).toLowerCase();
 }
 
 // 検索用正規化: ひらがな→カタカナ + 小文字化（"まーじ" でも "マージ(merge)" にヒット）
