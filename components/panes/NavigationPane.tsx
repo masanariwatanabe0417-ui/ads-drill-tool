@@ -184,6 +184,8 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                 (s, c) => s + c.lessons.reduce((a, l) => a + l.questions.length, 0),
                 0
               );
+              // 講義シリーズは「コース・問」の数え方をしない（第○回の集まりとして見せる）
+              const isLectureSeries = group.courses.every((c) => c.contentType === "lecture");
               // シリーズのテーマ色（本家ドリルの色。「色でどのコースか想像できる」ための目印）
               const color = seriesColor(group.seriesName, collectedColors);
 
@@ -201,7 +203,9 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                     <Library className="h-3.5 w-3.5 shrink-0" style={{ color }} />
                     <div className="min-w-0">
                       <p className="text-xs font-bold truncate" style={{ color }}>{group.seriesName}</p>
-                      <p className="text-xs opacity-60">{group.courses.length}コース・{seriesTotalQ}問学習済み</p>
+                      <p className="text-xs opacity-60">
+                        {isLectureSeries ? `${group.courses.length}回分` : `${group.courses.length}コース・${seriesTotalQ}問学習済み`}
+                      </p>
                     </div>
                   </button>
 
@@ -212,6 +216,9 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                         const courseView: TeacherView = { type: "course", courseKey: course.courseKey };
                         const courseExpanded = expandedCourses.has(course.courseKey);
                         const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+                        // 講義は1レッスン=1セクション=1エントリ。レッスン以下のツリーを出さず、
+                        // 展開時はセクション行（見出し＋要点）を直接並べて解説へ飛ばす。
+                        const isLecture = course.contentType === "lecture";
 
                         return (
                           <div key={course.courseKey}>
@@ -240,13 +247,47 @@ export default function NavigationPane({ studyLog, teacherView, onSelectView, on
                       />
                       <div className="min-w-0">
                         <p className="text-xs font-semibold truncate">{course.courseName}</p>
-                        <p className="text-xs opacity-60">{totalQ}問学習済み</p>
+                        <p className="text-xs opacity-60">{isLecture ? `${course.lessons.length}セクション` : `${totalQ}問学習済み`}</p>
                       </div>
                     </button>
                   </div>
 
+                  {/* 講義: セクション行を直接並べる（Q番号・レッスン階層なし） */}
+                  {courseExpanded && isLecture && (
+                    <div className="ml-5 space-y-0.5">
+                      {course.lessons.map((lesson) => {
+                        const q = lesson.questions[0];
+                        if (!q) return null;
+                        const qView: TeacherView = {
+                          type: "question",
+                          courseKey: course.courseKey,
+                          lessonName: lesson.lessonName,
+                          questionInfo: q.questionInfo,
+                        };
+                        return (
+                          <button
+                            key={lesson.lessonName}
+                            onClick={() => onSelectView(qView)}
+                            className={cn(
+                              "w-full flex items-start gap-1.5 px-2 py-1.5 rounded-md text-left transition-colors",
+                              isActive(qView)
+                                ? "bg-primary text-primary-foreground"
+                                : "hover:bg-accent"
+                            )}
+                          >
+                            <FileText className="h-3 w-3 shrink-0 mt-0.5" />
+                            <div className="min-w-0">
+                              <p className="text-xs font-medium">{lesson.lessonName}</p>
+                              <p className="text-xs opacity-70 line-clamp-2">{q.keyLearning}</p>
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
                   {/* レッスン一覧 */}
-                  {courseExpanded && (
+                  {courseExpanded && !isLecture && (
                     <div className="ml-5 space-y-0.5">
                       {course.lessons.map((lesson) => {
                         const lessonKey = `${course.courseKey}__${lesson.lessonName}`;

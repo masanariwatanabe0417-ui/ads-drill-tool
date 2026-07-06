@@ -334,7 +334,11 @@ export default function DrillTool() {
       const res = await aiFetch("/api/overview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: `${course.seriesName} ${course.courseName}`, sections }),
+        body: JSON.stringify({
+          title: `${course.seriesName} ${course.courseName}`,
+          sections,
+          kind: course.contentType === "lecture" ? "lecture" : "course",
+        }),
       });
       const data = await res.json();
       if (!res.ok || !data.overview) {

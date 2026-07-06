@@ -42,6 +42,9 @@ export interface CourseData {
   courseKey: string;     // `${series}__${course}` の一意キー
   seriesName: string;
   courseName: string;
+  // "lecture" = スクール講義の疑似コース（1レッスン=文字起こしの1セクション・1問のみ）。
+  // 未設定は従来どおりドリル。合計問題数の検証ではlectureを除外する。
+  contentType?: "lecture";
   lessons: LessonData[];
   diagram?: string;      // 旧: コースまとめの図解（Mermaid記法）。後方互換のため残す
   diagramHtml?: string;  // コースまとめの図解（リッチHTML・「図解化」ボタンで生成）

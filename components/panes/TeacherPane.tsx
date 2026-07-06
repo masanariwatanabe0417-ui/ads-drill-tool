@@ -81,6 +81,7 @@ function OverviewBlock({
   scope,
   highlights,
   onRemoveHighlight,
+  unitLabel = "コース",
 }: {
   text?: string;
   loading: boolean;
@@ -88,12 +89,13 @@ function OverviewBlock({
   scope: string;
   highlights: SummaryHighlight[];
   onRemoveHighlight: (h: SummaryHighlight) => void;
+  unitLabel?: string; // 講義まとめでは「講義」（コース/レッスン表記を出さない）
 }) {
   if (loading && !text) {
     return (
       <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 flex items-center gap-2 text-sm text-amber-800">
         <Loader2 className="h-4 w-4 animate-spin shrink-0" />
-        コースの総括を作成中...
+        {unitLabel}の総括を作成中...
       </div>
     );
   }
@@ -103,7 +105,7 @@ function OverviewBlock({
       <div className="flex items-start justify-between gap-2 mb-1">
         <p className="text-xs font-bold text-amber-700 flex items-center gap-1.5">
           <Sparkles className="h-3.5 w-3.5" />
-          コースの総括
+          {unitLabel}の総括
         </p>
         <button
           onClick={onRegenerate}
@@ -952,13 +954,17 @@ function CourseSummary({
   );
   const hlFor = (scope: string) => highlights.filter((h) => h.scope === scope);
   const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
+  // 講義はセクション数だけ見せる（レッスン/問の数え方・Q番号は出さない）
+  const isLecture = course.contentType === "lecture";
   return (
     <div id="teacher-print-area" className="space-y-5" onMouseUp={handleMouseUp}>
       <div className="flex items-start justify-between gap-2">
         <div>
           <h2 className="text-base font-bold text-foreground">{course.courseName} まとめ</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            {course.seriesName} ／ {course.lessons.length}レッスン ／ {totalQ}問学習済み
+            {isLecture
+              ? `${course.seriesName} ／ ${course.lessons.length}セクション`
+              : `${course.seriesName} ／ ${course.lessons.length}レッスン ／ ${totalQ}問学習済み`}
           </p>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
@@ -976,6 +982,7 @@ function CourseSummary({
         scope={`ov:${view.courseKey}`}
         highlights={hlFor(`ov:${view.courseKey}`)}
         onRemoveHighlight={onRemoveHighlight}
+        unitLabel={isLecture ? "講義" : "コース"}
       />
       {course.diagramHtml ? (
         <HtmlDiagram html={course.diagramHtml} />
@@ -992,7 +999,9 @@ function CourseSummary({
               const scope = `kl:${view.courseKey}__${lesson.lessonName}__${q.questionInfo}`;
               return (
                 <div key={q.questionInfo} className="flex gap-2">
-                  <span className="text-xs font-bold text-primary shrink-0 w-8">{q.questionInfo}</span>
+                  {!isLecture && (
+                    <span className="text-xs font-bold text-primary shrink-0 w-8">{q.questionInfo}</span>
+                  )}
                   <p data-hl-block={scope} className="text-xs text-foreground leading-relaxed">
                     {renderWithHighlights(q.keyLearning, hlFor(scope), onRemoveHighlight)}
                   </p>
@@ -1270,15 +1279,21 @@ export default function TeacherPane({
     if (printHintTimer.current) clearTimeout(printHintTimer.current);
   }, []);
 
+  // 講義（contentType: "lecture"）ではQ番号やコース/レッスン表記を出さない
+  const viewCourse =
+    teacherView && teacherView.type !== "glossary"
+      ? studyLog.courses.find((c) => c.courseKey === teacherView.courseKey)
+      : undefined;
+  const isLectureView = viewCourse?.contentType === "lecture";
   const viewLabel =
     teacherView?.type === "course"
-      ? "コースまとめ"
+      ? (isLectureView ? "講義まとめ" : "コースまとめ")
       : teacherView?.type === "lesson"
       ? "レッスンまとめ"
       : teacherView?.type === "glossary"
       ? "単語帳"
       : teacherView?.type === "question"
-      ? teacherView.questionInfo
+      ? (isLectureView ? teacherView.lessonName : teacherView.questionInfo)
       : null;
 
   // PDF出力はレッスン/コースまとめ表示時のみ
