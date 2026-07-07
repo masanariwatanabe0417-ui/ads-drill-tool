@@ -80,12 +80,49 @@ function PaneResizer({
   );
 }
 
-function findExplanation(studyLog: StudyLog, view: TeacherView): string {
-  if (view?.type !== "question") return "";
+// 質問ペインへ渡す「いま先生ペインに表示中の内容」。問題ビューだけでなく
+// レッスン/コースまとめでも文脈を組み立てる（画面で見えているものをそのままAIに渡す）。
+const VIEW_CONTEXT_MAX = 8000; // コースまとめの要点集は長くなり得るためプロンプト肥大を防ぐ
+
+function describeTeacherView(
+  studyLog: StudyLog,
+  view: TeacherView
+): { title: string; context: string } {
+  if (!view) return { title: "不明", context: "" };
+  if (view.type === "glossary") return { title: "単語帳一覧", context: "" };
   const course = studyLog.courses.find((c) => c.courseKey === view.courseKey);
-  const lesson = course?.lessons.find((l) => l.lessonName === view.lessonName);
-  const q = lesson?.questions.find((q) => q.questionInfo === view.questionInfo);
-  return q?.explanation ?? "";
+  if (!course) return { title: "不明", context: "" };
+  const courseLabel = `${course.seriesName} ${course.courseName}`;
+  if (view.type === "question") {
+    const lesson = course.lessons.find((l) => l.lessonName === view.lessonName);
+    const q = lesson?.questions.find((q) => q.questionInfo === view.questionInfo);
+    return {
+      title: `${courseLabel} - ${view.lessonName} ${view.questionInfo}`,
+      context: q?.explanation ?? "",
+    };
+  }
+  if (view.type === "lesson") {
+    const lesson = course.lessons.find((l) => l.lessonName === view.lessonName);
+    const points = (lesson?.questions ?? [])
+      .map((q) => `- ${q.questionInfo}: ${q.keyLearning}`)
+      .join("\n");
+    return {
+      title: `${courseLabel} - ${view.lessonName}（レッスンまとめ）`,
+      context: points ? `このレッスンの要点一覧：\n${points}` : "",
+    };
+  }
+  // type === "course"
+  const digest = course.lessons
+    .map((l) => `■ ${l.lessonName}\n${l.questions.map((q) => `- ${q.keyLearning}`).join("\n")}`)
+    .join("\n");
+  const context = [
+    course.overviewText ? `【コース総括】\n${course.overviewText}` : "",
+    digest ? `【各レッスンの要点】\n${digest}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n")
+    .slice(0, VIEW_CONTEXT_MAX);
+  return { title: `${courseLabel}（コースまとめ）`, context };
 }
 
 export default function DrillTool() {
@@ -687,6 +724,7 @@ export default function DrillTool() {
     async (question: string) => {
       setQuestionLoading(true);
       try {
+        const view = describeTeacherView(studyLog, teacherView);
         const res = await aiFetch("/api/question", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -694,10 +732,13 @@ export default function DrillTool() {
             question,
             questionImageDataUrl: screenshots.questionImage,
             answerImageDataUrl: screenshots.answerImage,
-            currentExplanation: findExplanation(studyLog, teacherView),
-            lessonTitle: currentLessonInfo
-              ? `${currentLessonInfo.series} ${currentLessonInfo.course} - ${currentLessonInfo.lesson}`
-              : "不明",
+            currentExplanation: view.context,
+            lessonTitle:
+              teacherView !== null
+                ? view.title
+                : currentLessonInfo
+                ? `${currentLessonInfo.series} ${currentLessonInfo.course} - ${currentLessonInfo.lesson}`
+                : "不明",
           }),
         });
         if (!res.ok) {
@@ -709,7 +750,9 @@ export default function DrillTool() {
           id: Date.now().toString(),
           question,
           answer: data.answer || "回答を取得できませんでした",
-          proposedAddition: data.proposedAddition || "",
+          // 追加案の永続先（解説本文）があるのは問題ビューだけ。他ビューでは非表示にする
+          proposedAddition:
+            teacherView?.type === "question" ? data.proposedAddition || "" : "",
           approved: false,
         };
         setQaEntries((prev) => [...prev, entry]);
@@ -822,7 +865,7 @@ export default function DrillTool() {
         <QuestionPane
           qaEntries={qaEntries}
           isLoading={questionLoading}
-          hasLesson={!!screenshots.questionImage}
+          canAsk={teacherView !== null || !!screenshots.questionImage}
           onAskQuestion={handleAskQuestion}
           onApproveAddition={handleApproveAddition}
           glossaryFocusTerm={glossaryFocusTerm}

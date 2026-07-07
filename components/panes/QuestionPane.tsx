@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 interface QuestionPaneProps {
   qaEntries: QAEntry[];
   isLoading: boolean;
-  hasLesson: boolean;
+  // 先生ペインに何か表示中（ナビ選択 or スクショ貼付）なら質問できる
+  canAsk: boolean;
   onAskQuestion: (question: string) => void;
   onApproveAddition: (entryId: string) => void;
   // 単語帳モード
@@ -29,7 +30,7 @@ interface QuestionPaneProps {
 export default function QuestionPane({
   qaEntries,
   isLoading,
-  hasLesson,
+  canAsk,
   onAskQuestion,
   onApproveAddition,
   glossaryFocusTerm,
@@ -110,10 +111,14 @@ export default function QuestionPane({
                   <p className="text-sm font-medium text-violet-600">「{glossaryFocusTerm}」について質問</p>
                   <p className="text-xs">「もっと詳しく」「具体例を教えて」など<br/>Ctrl+Enter で送信</p>
                 </>
+              ) : canAsk ? (
+                <>
+                  <p className="text-sm">表示中の内容について質問できます</p>
+                  <p className="text-xs">Ctrl+Enter で送信</p>
+                </>
               ) : (
                 <>
-                  <p className="text-sm">先生への質問を入力してください</p>
-                  <p className="text-xs">Ctrl+Enter で送信</p>
+                  <p className="text-sm">ナビで問題やまとめを選ぶと質問できます</p>
                 </>
               )}
             </div>
@@ -246,16 +251,16 @@ export default function QuestionPane({
           placeholder={
             isGlossaryMode
               ? `「${glossaryFocusTerm}」について質問... (Ctrl+Enter で送信)`
-              : hasLesson
-              ? "先生への質問を入力... (Ctrl+Enter で送信)"
-              : "先にレッスンを選択してください"
+              : canAsk
+              ? "表示中の内容について質問... (Ctrl+Enter で送信)"
+              : "ナビで問題やまとめを選ぶと質問できます"
           }
-          disabled={(!hasLesson && !isGlossaryMode) || activeLoading}
+          disabled={(!canAsk && !isGlossaryMode) || activeLoading}
           className="min-h-[72px] text-sm resize-none"
         />
         <Button
           onClick={handleSubmit}
-          disabled={!draft.trim() || ((!hasLesson && !isGlossaryMode) || activeLoading)}
+          disabled={!draft.trim() || ((!canAsk && !isGlossaryMode) || activeLoading)}
           className={cn("w-full gap-2", isGlossaryMode && "bg-violet-600 hover:bg-violet-700")}
           size="sm"
         >
