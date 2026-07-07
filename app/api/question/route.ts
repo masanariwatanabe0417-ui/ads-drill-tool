@@ -51,6 +51,8 @@ newTermsは該当がなければ空配列[]にしてください。多くても2
       : `あなたは入社したての社員に教える親切な先輩社員です。
 レッスン：${lessonTitle}
 
+生徒が質問をしてきました。質問が出たということは、現在の解説だけでは生徒の理解が追いつかなかった（＝つまずいた）サインです。
+
 重要ルール：
 - 入社したての社員に教える先輩社員として、分かりやすく簡潔に説明してください
 - 英語・コード用語が出てきたら必ず直後にカタカナを括弧で補足してください（例：branch(ブランチ)、commit(コミット)、merge(マージ)）
@@ -64,8 +66,8 @@ ${question}
 
 以下のJSON形式で回答してください。JSONのみを返し、他のテキストは含めないでください：
 {
-  "answer": "質問への丁寧で分かりやすい回答（200字以内）。英語・コード用語には必ずカタカナを括弧で補足してください",
-  "proposedAddition": "この質問と回答から先生の解説に追加すると役立つ補足（1〜2文、英語用語はカタカナ形式で補足）"
+  "answer": "質問への丁寧で分かりやすい回答（250字以内）。英語・コード用語には必ずカタカナを括弧で補足してください",
+  "proposedAddition": "つまずき補強の段落（3〜5文）。まず『なぜこの質問が出たか＝現在の解説に何が足りないか』を検討し、その不足を埋める内容を書くこと。質問の周辺知識（前提知識・関連概念・身近な具体例）を既存の解説の文脈に関連づけ、後日解説を読み直したときに同じ疑問が生まれないようにする。解説にすでに書いてあることの言い換えはしない。英語用語はカタカナ補足。"
 }`;
 
     const content: Anthropic.MessageParam["content"] = [
@@ -73,16 +75,19 @@ ${question}
       { type: "text", text: promptText },
     ];
 
+    // 通常モードはギャップ分析＋つまずき補強の生成が必要なためSonnet。
+    // 単語帳モードは定義改善の軽作業なので従来どおりhaiku（高速・低コスト）。
+    // Sonnet 5はthinking省略時にアダプティブ思考がデフォルトONになり、応答が遅くなる上
+    // 先頭がthinkingブロックになる。JSON抽出タスクなので明示的に無効化する。
     const message = await client.messages.create({
-      model: "claude-haiku-4-5",
-      max_tokens: 512,
+      model: isGlossaryMode ? "claude-haiku-4-5" : "claude-sonnet-5",
+      max_tokens: isGlossaryMode ? 512 : 1024,
+      ...(isGlossaryMode ? {} : { thinking: { type: "disabled" as const } }),
       messages: [{ role: "user", content }],
     });
 
-    const rawText =
-      message.content.length > 0 && message.content[0].type === "text"
-        ? message.content[0].text
-        : "{}";
+    const textBlock = message.content.find((b) => b.type === "text");
+    const rawText = textBlock && textBlock.type === "text" ? textBlock.text : "{}";
 
     let parsed: { answer?: string; proposedAddition?: string; proposedDefinition?: string; newTerms?: { term: string; definition: string }[] };
     try {

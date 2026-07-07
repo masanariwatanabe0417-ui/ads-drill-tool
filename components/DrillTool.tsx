@@ -699,6 +699,22 @@ export default function DrillTool() {
     setIsAutoEnabled(true);
   }, []);
 
+  // ビュー切替でQ&Aスレッドをクリア。文脈の混線と、問題Aで出た補強案を
+  // 問題B閲覧中に承認して誤追記する事故を根絶する（履歴の永続化は不採用＝消えてよい方針）
+  const teacherViewKey =
+    teacherView === null
+      ? "none"
+      : teacherView.type === "question"
+      ? `q:${teacherView.courseKey}:${teacherView.lessonName}:${teacherView.questionInfo}`
+      : teacherView.type === "lesson"
+      ? `l:${teacherView.courseKey}:${teacherView.lessonName}`
+      : teacherView.type === "course"
+      ? `c:${teacherView.courseKey}`
+      : "glossary";
+  useEffect(() => {
+    setQaEntries([]);
+  }, [teacherViewKey]);
+
   // 解答がセットされたら自動解析
   useEffect(() => {
     if (screenshots.answerImage && screenshots.questionImage) {
@@ -770,6 +786,10 @@ export default function DrillTool() {
       const entry = qaEntries.find((e) => e.id === entryId);
       if (entry?.proposedAddition && teacherView?.type === "question") {
         const { courseKey, lessonName, questionInfo } = teacherView;
+        // 見出しに質問の要旨を入れ、後から読み返したとき「自分がつまずいた箇所」だと分かる形で蓄積する
+        const q1line = entry.question.replace(/\s+/g, " ").trim();
+        const shortQ = q1line.length > 24 ? `${q1line.slice(0, 24)}…` : q1line;
+        const addition = `\n\n---\n\n#### 💡 つまずき補強（「${shortQ}」の質問から）\n\n${entry.proposedAddition}`;
         setStudyLog((prev) => {
           const courses = prev.courses.map((c) => {
             if (c.courseKey !== courseKey) return c;
@@ -781,13 +801,14 @@ export default function DrillTool() {
                   ...l,
                   questions: l.questions.map((q) => {
                     if (q.questionInfo !== questionInfo) return q;
-                    return { ...q, explanation: `${q.explanation}\n\n---\n${entry.proposedAddition}` };
+                    return { ...q, explanation: `${q.explanation}${addition}` };
                   }),
                 };
               }),
             };
           });
-          return { courses };
+          // ...prev を必ず維持（courses だけ返すと単語帳の手動定義・リネーム・マーカーが全消失する）
+          return { ...prev, courses };
         });
       }
       setQaEntries((prev) =>

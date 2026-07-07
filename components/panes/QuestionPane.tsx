@@ -144,7 +144,7 @@ export default function QuestionPane({
                       "border rounded-lg p-2 space-y-1.5",
                       entry.approved ? "border-green-200 bg-green-50" : "border-blue-200 bg-blue-50"
                     )}>
-                      <p className="text-xs text-muted-foreground font-medium">先生ペインへの追加案：</p>
+                      <p className="text-xs text-muted-foreground font-medium">💡 つまずき補強の提案：</p>
                       <p className="text-xs italic text-foreground/80">{entry.proposedAddition}</p>
                       {entry.approved ? (
                         <Badge variant="secondary" className="text-xs gap-1 bg-green-100 text-green-700">
