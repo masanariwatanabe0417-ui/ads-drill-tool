@@ -154,3 +154,55 @@ export function buildGlossary(studyLog: StudyLog): GlossaryTerm[] {
     readingKey(a.term).localeCompare(readingKey(b.term), "ja")
   );
 }
+
+// 選択テキストが単語帳に既に登録済みかどうかを調べる（重複登録の防止用）。
+// 表記そのもの・括弧前の本体・重複判定キー（読みベース）の3通りで照合するので、
+// 「Changes」を選択しても登録済みの「Changes(チェンジズ)」にヒットする。
+export function findGlossaryEntry(
+  terms: GlossaryTerm[],
+  text: string
+): GlossaryTerm | undefined {
+  const headOf = (t: string) => {
+    const m = t.match(/^\s*([^(（]+?)\s*[(（]/);
+    return (m ? m[1] : t).trim();
+  };
+  const q = normalizeForSearch(text.trim());
+  if (!q) return undefined;
+  const qHead = normalizeForSearch(headOf(text));
+  const qKey = dedupeKey(text);
+  return terms.find(
+    (t) =>
+      normalizeForSearch(t.term) === q ||
+      normalizeForSearch(headOf(t.term)) === qHead ||
+      dedupeKey(t.term) === qKey
+  );
+}
+
+// ── 定義統合キャッシュ（localStorage） ───────────────────────────────
+// 複数定義をAIで1つにまとめた結果のキャッシュ。単語帳カードの表示と
+// 質問ペインのQ&A（現在の定義としてAIに渡す）で同じものを参照する。
+const CONSOLIDATE_CACHE_PREFIX = "glossary-consolidated:";
+
+function consolidateCacheKey(term: string, defs: string[]): string {
+  return CONSOLIDATE_CACHE_PREFIX + term.toLowerCase() + ":" + defs.join("|").length;
+}
+
+export function loadConsolidatedCache(term: string, defs: string[]): string | null {
+  try {
+    const raw = localStorage.getItem(consolidateCacheKey(term, defs));
+    if (!raw) return null;
+    const { defsHash, consolidated } = JSON.parse(raw);
+    return defsHash === defs.join("|") ? consolidated : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveConsolidatedCache(term: string, defs: string[], consolidated: string) {
+  try {
+    localStorage.setItem(
+      consolidateCacheKey(term, defs),
+      JSON.stringify({ defsHash: defs.join("|"), consolidated })
+    );
+  } catch {}
+}

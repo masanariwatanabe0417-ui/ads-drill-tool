@@ -4,7 +4,7 @@ import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRigh
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
 import { CourseData, ExtractedLessonInfo, GlossaryHighlight, LessonData, StudyLog, SummaryHighlight, TeacherView } from "@/lib/types";
-import { buildGlossary, GlossaryTerm, normalizeForSearch } from "@/lib/glossary";
+import { buildGlossary, findGlossaryEntry, GlossaryTerm, loadConsolidatedCache, normalizeForSearch, saveConsolidatedCache } from "@/lib/glossary";
 import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
 import type { Components } from "react-markdown";
@@ -288,31 +288,6 @@ function StepGuide() {
   );
 }
 
-// ── 定義統合キャッシュ（localStorage） ───────────────────────────────
-const CACHE_PREFIX = "glossary-consolidated:";
-
-function cacheKey(term: string, defs: string[]): string {
-  return CACHE_PREFIX + term.toLowerCase() + ":" + defs.join("|").length;
-}
-
-function loadCached(term: string, defs: string[]): string | null {
-  try {
-    const raw = localStorage.getItem(cacheKey(term, defs));
-    if (!raw) return null;
-    const { defsHash, consolidated } = JSON.parse(raw);
-    return defsHash === defs.join("|") ? consolidated : null;
-  } catch { return null; }
-}
-
-function saveCache(term: string, defs: string[], consolidated: string) {
-  try {
-    localStorage.setItem(
-      cacheKey(term, defs),
-      JSON.stringify({ defsHash: defs.join("|"), consolidated })
-    );
-  } catch {}
-}
-
 // 単語帳を開いた直後、キャッシュ未作成のカード全部が一斉に統合APIを叩くと
 // fetch失敗（Failed to fetch）が出るため、同時実行を絞る簡易キュー。
 let consolidateActive = 0;
@@ -393,7 +368,9 @@ function renderWithHighlights<T extends HLAnchor>(
 // ドラッグ選択を捕捉して「マーカー」ボタンを出し、確定/解除を扱う共通フック。
 // 対象ブロックは [data-hl-block]（その値が scope）で識別する。
 function useRangeMarker(
-  onCommit: (scope: string, anchor: HLAnchor) => void
+  onCommit: (scope: string, anchor: HLAnchor) => void,
+  // 指定すると「マーカー」の隣に「単語帳に追加」ボタンも出す（まとめ画面用）
+  onPickTerm?: (text: string) => void
 ) {
   const [pending, setPending] = useState<
     { top: number; left: number; scope: string; anchor: HLAnchor } | null
@@ -451,11 +428,17 @@ function useRangeMarker(
     return () => document.removeEventListener("mousedown", onDown);
   }, [pending]);
 
+  const pickTerm = () => {
+    if (!pending || !onPickTerm) return;
+    const text = pending.anchor.quote.trim();
+    window.getSelection()?.removeAllRanges();
+    setPending(null);
+    if (text) onPickTerm(text);
+  };
+
   const marker = pending ? (
-    <button
+    <div
       data-marker-btn=""
-      onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-      onClick={commit}
       style={{
         position: "fixed",
         top: pending.top,
@@ -463,11 +446,29 @@ function useRangeMarker(
         transform: "translate(-50%, -100%) translateY(-6px)",
         zIndex: 50,
       }}
-      className="inline-flex items-center gap-1 rounded-full bg-yellow-400 px-2.5 py-1 text-xs font-medium text-yellow-950 shadow-lg hover:bg-yellow-500 print:hidden"
+      className="flex items-center gap-1.5 print:hidden"
     >
-      <Highlighter className="h-3.5 w-3.5" />
-      マーカー
-    </button>
+      <button
+        data-marker-btn=""
+        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+        onClick={commit}
+        className="inline-flex items-center gap-1 rounded-full bg-yellow-400 px-2.5 py-1 text-xs font-medium text-yellow-950 shadow-lg hover:bg-yellow-500"
+      >
+        <Highlighter className="h-3.5 w-3.5" />
+        マーカー
+      </button>
+      {onPickTerm && (
+        <button
+          data-marker-btn=""
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={pickTerm}
+          className="inline-flex items-center gap-1 rounded-full bg-blue-600 px-2.5 py-1 text-xs font-medium text-white shadow-lg hover:bg-blue-700"
+        >
+          <BookPlus className="h-3.5 w-3.5" />
+          単語帳に追加
+        </button>
+      )}
+    </div>
   ) : null;
 
   return { handleMouseUp, marker };
@@ -591,7 +592,7 @@ function GlossaryCard({
   };
 
   const [consolidated, setConsolidated] = useState<string | null>(() =>
-    term.definitions.length >= 2 ? loadCached(term.term, term.definitions) : null
+    term.definitions.length >= 2 ? loadConsolidatedCache(term.term, term.definitions) : null
   );
   const [consolidating, setConsolidating] = useState(false);
   const didRun = useRef(false);
@@ -616,7 +617,7 @@ function GlossaryCard({
       .then((data) => {
         const c = data?.consolidated;
         if (c) {
-          saveCache(term.term, term.definitions, c);
+          saveConsolidatedCache(term.term, term.definitions, c);
           setConsolidated(c);
         }
       })
@@ -900,6 +901,9 @@ function LessonSummary({
   highlights,
   onAddHighlight,
   onRemoveHighlight,
+  glossary,
+  onAddTerm,
+  onOpenGlossary,
 }: {
   lesson: LessonData;
   view: Extract<TeacherView, { type: "lesson" }>;
@@ -908,9 +912,20 @@ function LessonSummary({
   highlights: SummaryHighlight[];
   onAddHighlight: (h: SummaryHighlight) => void;
   onRemoveHighlight: (h: SummaryHighlight) => void;
+  glossary: GlossaryTerm[];
+  onAddTerm: (term: string, definition: string) => void;
+  onOpenGlossary: (term: string) => void;
 }) {
-  const { handleMouseUp, marker } = useRangeMarker((scope, anchor) =>
-    onAddHighlight({ scope, color: "yellow", ...anchor })
+  const { startAdd, dialog } = useGlossaryTermAdder({
+    getContext: () =>
+      [lesson.lessonName, ...lesson.questions.map((q) => q.keyLearning)].join("\n"),
+    glossary,
+    onAddTerm,
+    onOpenGlossary,
+  });
+  const { handleMouseUp, marker } = useRangeMarker(
+    (scope, anchor) => onAddHighlight({ scope, color: "yellow", ...anchor }),
+    startAdd
   );
   const hlFor = (scope: string) => highlights.filter((h) => h.scope === scope);
   return (
@@ -948,6 +963,7 @@ function LessonSummary({
         lesson.diagram && <MermaidDiagram code={lesson.diagram} />
       )}
       {marker}
+      {dialog}
     </div>
   );
 }
@@ -963,6 +979,9 @@ function CourseSummary({
   highlights,
   onAddHighlight,
   onRemoveHighlight,
+  glossary,
+  onAddTerm,
+  onOpenGlossary,
 }: {
   course: CourseData;
   view: Extract<TeacherView, { type: "course" }>;
@@ -973,9 +992,24 @@ function CourseSummary({
   highlights: SummaryHighlight[];
   onAddHighlight: (h: SummaryHighlight) => void;
   onRemoveHighlight: (h: SummaryHighlight) => void;
+  glossary: GlossaryTerm[];
+  onAddTerm: (term: string, definition: string) => void;
+  onOpenGlossary: (term: string) => void;
 }) {
-  const { handleMouseUp, marker } = useRangeMarker((scope, anchor) =>
-    onAddHighlight({ scope, color: "yellow", ...anchor })
+  const { startAdd, dialog } = useGlossaryTermAdder({
+    getContext: () =>
+      [
+        course.courseName,
+        course.overviewText ?? "",
+        ...course.lessons.flatMap((l) => [l.lessonName, ...l.questions.map((q) => q.keyLearning)]),
+      ].join("\n"),
+    glossary,
+    onAddTerm,
+    onOpenGlossary,
+  });
+  const { handleMouseUp, marker } = useRangeMarker(
+    (scope, anchor) => onAddHighlight({ scope, color: "yellow", ...anchor }),
+    startAdd
   );
   const hlFor = (scope: string) => highlights.filter((h) => h.scope === scope);
   const totalQ = course.lessons.reduce((s, l) => s + l.questions.length, 0);
@@ -1038,6 +1072,7 @@ function CourseSummary({
         course.diagram && <MermaidDiagram code={course.diagram} />
       )}
       {marker}
+      {dialog}
     </div>
   );
 }
@@ -1094,24 +1129,35 @@ function useSelectionPicker(onPick: (text: string, top: number, left: number) =>
   return { handleMouseUp, button };
 }
 
-// 問題の解説を描画し、選択した語句を単語帳に追加できるようにする。
-function ExplanationView({
-  explanation,
+// ── 単語帳への手動追加の共通フック ──────────────────────────────────
+// 選択語句 → AI定義ドラフト → 確認カード、の流れを問題解説と各まとめ画面で共用する。
+// 既に単語帳にある用語は重複登録せず「登録済み」の案内を出す（2026-07-07要望）。
+// 重複チェックは選択時と「追加する」押下時の2回行う（AI生成で用語名が変わるため）。
+function useGlossaryTermAdder({
+  getContext,
+  glossary,
   onAddTerm,
+  onOpenGlossary,
 }: {
-  explanation: string;
+  getContext: () => string;
+  glossary: GlossaryTerm[];
   onAddTerm: (term: string, definition: string) => void;
+  onOpenGlossary: (term: string) => void;
 }) {
   // 確認カード（AI生成中／編集可能なterm・definition）。
   const [draft, setDraft] = useState<{ term: string; definition: string; loading: boolean } | null>(null);
+  const [existing, setExisting] = useState<GlossaryTerm | null>(null);
 
   const startAdd = async (selected: string) => {
+    const hit = findGlossaryEntry(glossary, selected);
+    if (hit) { setExisting(hit); return; }
     setDraft({ term: selected, definition: "", loading: true });
     try {
       const res = await aiFetch("/api/glossary-term", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ selectedText: selected, context: explanation }),
+        // まとめ画面はコース全文だと長いので、AIに渡す文脈は先頭8000字に丸める
+        body: JSON.stringify({ selectedText: selected, context: getContext().slice(0, 8000) }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "生成に失敗しました");
@@ -1122,13 +1168,16 @@ function ExplanationView({
     }
   };
 
-  const { handleMouseUp, button } = useSelectionPicker((text) => startAdd(text));
+  const commit = () => {
+    if (!draft || !draft.term.trim() || !draft.definition.trim()) return;
+    const hit = findGlossaryEntry(glossary, draft.term);
+    if (hit) { setDraft(null); setExisting(hit); return; }
+    onAddTerm(draft.term, draft.definition);
+    setDraft(null);
+  };
 
-  return (
-    <div className="prose-sm max-w-none" onMouseUp={handleMouseUp}>
-      <ReactMarkdown components={questionMarkdownComponents}>{explanation}</ReactMarkdown>
-      {button}
-
+  const dialog = (
+    <>
       {draft && (
         <div className="not-prose fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 print:hidden">
           <div className="w-full max-w-md rounded-xl border bg-background p-4 shadow-xl space-y-3">
@@ -1168,11 +1217,7 @@ function ExplanationView({
                 キャンセル
               </button>
               <button
-                onClick={() => {
-                  if (!draft.term.trim() || !draft.definition.trim()) return;
-                  onAddTerm(draft.term, draft.definition);
-                  setDraft(null);
-                }}
+                onClick={commit}
                 disabled={!draft.term.trim() || !draft.definition.trim()}
                 className="inline-flex items-center gap-1 rounded-md bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-700 disabled:opacity-50"
               >
@@ -1183,6 +1228,69 @@ function ExplanationView({
           </div>
         </div>
       )}
+
+      {existing && (
+        <div className="not-prose fixed inset-0 z-[60] flex items-center justify-center bg-black/30 p-4 print:hidden">
+          <div className="w-full max-w-md rounded-xl border bg-background p-4 shadow-xl space-y-3">
+            <div className="flex items-center gap-2">
+              <BookMarked className="h-4 w-4 text-violet-600" />
+              <h3 className="text-sm font-semibold">既に単語帳に登録済みです</h3>
+            </div>
+            <p className="text-sm font-medium">{existing.term}</p>
+            {existing.definitions[0] && (
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                {existing.definitions[0]}
+              </p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setExisting(null)}
+                className="rounded-md border px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-muted"
+              >
+                閉じる
+              </button>
+              <button
+                onClick={() => { onOpenGlossary(existing.term); setExisting(null); }}
+                className="inline-flex items-center gap-1 rounded-md bg-violet-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-violet-700"
+              >
+                <BookMarked className="h-3.5 w-3.5" />
+                単語帳で開く
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  return { startAdd, dialog };
+}
+
+// 問題の解説を描画し、選択した語句を単語帳に追加できるようにする。
+function ExplanationView({
+  explanation,
+  glossary,
+  onAddTerm,
+  onOpenGlossary,
+}: {
+  explanation: string;
+  glossary: GlossaryTerm[];
+  onAddTerm: (term: string, definition: string) => void;
+  onOpenGlossary: (term: string) => void;
+}) {
+  const { startAdd, dialog } = useGlossaryTermAdder({
+    getContext: () => explanation,
+    glossary,
+    onAddTerm,
+    onOpenGlossary,
+  });
+  const { handleMouseUp, button } = useSelectionPicker((text) => startAdd(text));
+
+  return (
+    <div className="prose-sm max-w-none" onMouseUp={handleMouseUp}>
+      <ReactMarkdown components={questionMarkdownComponents}>{explanation}</ReactMarkdown>
+      {button}
+      {dialog}
     </div>
   );
 }
@@ -1207,9 +1315,16 @@ function renderContent(
   onGenerateDiagram: (view: TeacherView) => void,
   overviewLoadingKey: string | null,
   onRegenerateOverview: (courseKey: string) => void,
-  onAddManualGlossaryTerm: (term: string, definition: string) => void
+  onAddManualGlossaryTerm: (term: string, definition: string) => void,
+  glossary: GlossaryTerm[]
 ): React.ReactNode {
   if (!teacherView) return null;
+
+  // 「登録済み」案内から単語帳の該当カードへ飛ぶ
+  const openGlossary = (term: string) => {
+    onSelectView({ type: "glossary" });
+    onFocusGlossaryTerm(term);
+  };
 
   if (teacherView.type === "glossary") {
     return (
@@ -1233,7 +1348,14 @@ function renderContent(
     const lesson = course?.lessons.find((l) => l.lessonName === teacherView.lessonName);
     const q = lesson?.questions.find((q) => q.questionInfo === teacherView.questionInfo);
     const explanation = q?.explanation ?? "";
-    return <ExplanationView explanation={explanation} onAddTerm={onAddManualGlossaryTerm} />;
+    return (
+      <ExplanationView
+        explanation={explanation}
+        glossary={glossary}
+        onAddTerm={onAddManualGlossaryTerm}
+        onOpenGlossary={openGlossary}
+      />
+    );
   }
 
   if (teacherView.type === "lesson") {
@@ -1249,6 +1371,9 @@ function renderContent(
         highlights={summaryHighlights}
         onAddHighlight={onAddSummaryHighlight}
         onRemoveHighlight={onRemoveSummaryHighlight}
+        glossary={glossary}
+        onAddTerm={onAddManualGlossaryTerm}
+        onOpenGlossary={openGlossary}
       />
     );
   }
@@ -1267,6 +1392,9 @@ function renderContent(
         highlights={summaryHighlights}
         onAddHighlight={onAddSummaryHighlight}
         onRemoveHighlight={onRemoveSummaryHighlight}
+        glossary={glossary}
+        onAddTerm={onAddManualGlossaryTerm}
+        onOpenGlossary={openGlossary}
       />
     );
   }
@@ -1299,6 +1427,13 @@ export default function TeacherPane({
   onRegenerateOverview = () => {},
   onAddManualGlossaryTerm = () => {},
 }: TeacherPaneProps) {
+  // 単語帳への重複登録チェック用（非表示にした用語は「未登録」扱いにして再追加を許す）
+  const glossaryForDup = useMemo(() => {
+    const all = buildGlossary(studyLog);
+    const deletedSet = new Set(deletedGlossaryTerms.map((t) => t.toLowerCase()));
+    return all.filter((t) => !deletedSet.has(t.term.toLowerCase()));
+  }, [studyLog, deletedGlossaryTerms]);
+
   const [printHint, setPrintHint] = useState(false);
   const printHintTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -1442,7 +1577,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview, onAddManualGlossaryTerm)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview, onAddManualGlossaryTerm, glossaryForDup)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

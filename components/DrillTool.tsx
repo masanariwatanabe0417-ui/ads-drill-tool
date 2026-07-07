@@ -18,6 +18,67 @@ import {
 } from "@/lib/types";
 import { aiFetch } from "@/lib/passcode";
 import { addToStudyLog, makeCourseKey } from "@/lib/studyLog";
+import { buildGlossary, loadConsolidatedCache } from "@/lib/glossary";
+
+// ── ペイン幅のドラッグ調節 ──────────────────────────────────────────
+// ナビ・スクショ・質問ペインの幅を境界のドラッグで変えられるようにする（先生ペインは flex-1）。
+// 幅は localStorage に保存し、次回起動時も引き継ぐ。
+const PANE_MIN = 200;
+const PANE_MAX = 640;
+const clampPaneWidth = (w: number) => Math.min(PANE_MAX, Math.max(PANE_MIN, w));
+
+function loadPaneWidth(key: string, fallback: number): number {
+  try {
+    const raw = localStorage.getItem(`paneWidth:${key}`);
+    const n = raw ? parseInt(raw, 10) : NaN;
+    return Number.isFinite(n) ? clampPaneWidth(n) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+// ペイン境界のドラッグハンドル。invert=true は「左へ引くほど広がる」ペイン（右端の質問ペイン）用。
+function PaneResizer({
+  paneKey,
+  width,
+  setWidth,
+  invert = false,
+}: {
+  paneKey: string;
+  width: number;
+  setWidth: (w: number) => void;
+  invert?: boolean;
+}) {
+  const onMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = width;
+    let last = startW;
+    const move = (ev: MouseEvent) => {
+      const dx = ev.clientX - startX;
+      last = clampPaneWidth(startW + (invert ? -dx : dx));
+      setWidth(last);
+    };
+    const up = () => {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      try { localStorage.setItem(`paneWidth:${paneKey}`, String(last)); } catch {}
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  };
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      className="relative z-10 -mx-0.5 w-1 shrink-0 cursor-col-resize bg-transparent hover:bg-blue-400/60 active:bg-blue-500 transition-colors print:hidden"
+      title="ドラッグで幅を調節"
+    />
+  );
+}
 
 function findExplanation(studyLog: StudyLog, view: TeacherView): string {
   if (view?.type !== "question") return "";
@@ -57,6 +118,11 @@ export default function DrillTool() {
       return next;
     });
   }, []);
+
+  // ペイン幅（境界のドラッグで調節。w-72=288px / w-80=320px が従来の既定値）
+  const [navWidth, setNavWidth] = useState(() => loadPaneWidth("nav", 288));
+  const [shotWidth, setShotWidth] = useState(() => loadPaneWidth("shot", 288));
+  const [questionWidth, setQuestionWidth] = useState(() => loadPaneWidth("question", 320));
   const [deletedGlossaryTerms, setDeletedGlossaryTerms] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem("deletedGlossaryTerms");
@@ -86,11 +152,23 @@ export default function DrillTool() {
   const handleGlossaryQuestion = useCallback(async (question: string) => {
     if (!glossaryFocusTerm) return;
     setGlossaryQaLoading(true);
-    // 現在の定義：手動追加 > override > なし
+    // 現在の定義：単語帳カードに表示されているものと同じ内容をAIに渡す。
+    // buildGlossary は解説由来の定義に override・手動追加を反映済み。複数定義は
+    // 統合キャッシュ（カード表示と同じ統合文）があればそれを優先する。
+    // ※以前は手動追加/overrideしか見ておらず、解説由来の用語が全て「未登録」扱いになっていた
+    const entry = buildGlossary(studyLog).find(
+      (t) => t.term.toLowerCase() === glossaryFocusTerm.toLowerCase()
+    );
+    const defs = entry?.definitions ?? [];
+    const consolidated =
+      entry && defs.length >= 2 ? loadConsolidatedCache(entry.term, defs) : null;
     const currentDef =
-      studyLog.glossaryManualTerms?.[glossaryFocusTerm] ??
-      studyLog.glossaryOverrides?.[glossaryFocusTerm.toLowerCase()] ??
-      "";
+      consolidated ??
+      (defs.length > 0
+        ? defs.slice(0, 40).map((d) => `- ${d}`).join("\n") // 定義が極端に多い語はプロンプト肥大を防ぐため40件まで
+        : studyLog.glossaryManualTerms?.[glossaryFocusTerm] ??
+          studyLog.glossaryOverrides?.[glossaryFocusTerm.toLowerCase()] ??
+          "");
     try {
       const res = await aiFetch("/api/question", {
         method: "POST",
@@ -112,7 +190,7 @@ export default function DrillTool() {
     } finally {
       setGlossaryQaLoading(false);
     }
-  }, [glossaryFocusTerm, studyLog.glossaryOverrides, studyLog.glossaryManualTerms]);
+  }, [glossaryFocusTerm, studyLog]);
 
   const handleSaveGlossaryDefinition = useCallback((term: string, definition: string) => {
     setStudyLog((prev) => ({
@@ -683,7 +761,7 @@ export default function DrillTool() {
         onClose={() => setIsDrillPanelOpen(false)}
         onCapture={handleScreenshotUpload}
       />
-      <div className="w-72 shrink-0">
+      <div className="shrink-0" style={{ width: navWidth }}>
         <NavigationPane
           studyLog={studyLog}
           teacherView={teacherView}
@@ -691,7 +769,11 @@ export default function DrillTool() {
           onRenameQuestion={renameQuestion}
         />
       </div>
-      <div className={isScreenshotPaneCollapsed ? "w-9 shrink-0" : "w-72 shrink-0"}>
+      <PaneResizer paneKey="nav" width={navWidth} setWidth={setNavWidth} />
+      <div
+        className={isScreenshotPaneCollapsed ? "w-9 shrink-0" : "shrink-0"}
+        style={isScreenshotPaneCollapsed ? undefined : { width: shotWidth }}
+      >
         <ScreenshotPane
           screenshots={screenshots}
           onScreenshotUpload={handleScreenshotUpload}
@@ -705,6 +787,9 @@ export default function DrillTool() {
           onToggleCollapse={toggleScreenshotPane}
         />
       </div>
+      {!isScreenshotPaneCollapsed && (
+        <PaneResizer paneKey="shot" width={shotWidth} setWidth={setShotWidth} />
+      )}
       <div className="flex-1 min-w-[300px]">
         <TeacherPane
           studyLog={studyLog}
@@ -732,7 +817,8 @@ export default function DrillTool() {
           onAddManualGlossaryTerm={handleAddManualGlossaryTerm}
         />
       </div>
-      <div className="w-80 shrink-0">
+      <PaneResizer paneKey="question" width={questionWidth} setWidth={setQuestionWidth} invert />
+      <div className="shrink-0" style={{ width: questionWidth }}>
         <QuestionPane
           qaEntries={qaEntries}
           isLoading={questionLoading}
