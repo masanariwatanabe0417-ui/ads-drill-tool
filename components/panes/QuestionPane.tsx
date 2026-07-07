@@ -17,6 +17,8 @@ interface QuestionPaneProps {
   canAsk: boolean;
   onAskQuestion: (question: string) => void;
   onApproveAddition: (entryId: string) => void;
+  // まとめビューの「気づき」提案を承認して気づき欄に追加
+  onApproveInsight: (entryId: string) => void;
   // 単語帳モード
   glossaryFocusTerm?: string | null;
   glossaryQaEntries?: QAEntry[];
@@ -33,6 +35,7 @@ export default function QuestionPane({
   canAsk,
   onAskQuestion,
   onApproveAddition,
+  onApproveInsight,
   glossaryFocusTerm,
   glossaryQaEntries = [],
   glossaryQaLoading = false,
@@ -160,6 +163,33 @@ export default function QuestionPane({
                         >
                           <Plus className="h-3 w-3" />
                           先生ペインに追加
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 通常モード（まとめビュー）：気づき追加案 */}
+                  {!isGlossaryMode && entry.proposedInsight && (
+                    <div className={cn(
+                      "border rounded-lg p-2 space-y-1.5",
+                      entry.approved ? "border-green-200 bg-green-50" : "border-amber-200 bg-amber-50"
+                    )}>
+                      <p className="text-xs text-muted-foreground font-medium">💭 気づきの提案：</p>
+                      <p className="text-xs italic text-foreground/80">{entry.proposedInsight}</p>
+                      {entry.approved ? (
+                        <Badge variant="secondary" className="text-xs gap-1 bg-green-100 text-green-700">
+                          <CheckCircle2 className="h-3 w-3" />
+                          追加済み
+                        </Badge>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-6 text-xs gap-1 border-amber-300 hover:bg-amber-100 text-amber-800"
+                          onClick={() => onApproveInsight(entry.id)}
+                        >
+                          <Plus className="h-3 w-3" />
+                          気づきとして追加
                         </Button>
                       )}
                     </div>

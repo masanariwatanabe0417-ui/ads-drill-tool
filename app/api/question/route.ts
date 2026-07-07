@@ -13,6 +13,7 @@ export async function POST(req: Request) {
       lessonTitle,
       glossaryTerm,
       currentDefinition,
+      summaryMode, // まとめビュー（レッスン/コース/講義まとめ）からの質問。追加案の代わりに「気づき」を提案する
     } = await req.json();
 
     if (!question?.trim()) {
@@ -48,6 +49,27 @@ ${question}
   ]
 }
 newTermsは該当がなければ空配列[]にしてください。多くても2件まで。`
+      : summaryMode
+      ? `あなたは入社したての社員に教える親切な先輩社員です。
+表示中のまとめ：${lessonTitle}
+
+生徒がまとめを読み返しながら質問をしてきました。
+
+重要ルール：
+- 入社したての社員に教える先輩社員として、分かりやすく簡潔に説明してください
+- 英語・コード用語が出てきたら必ず直後にカタカナを括弧で補足してください（例：branch(ブランチ)、commit(コミット)、merge(マージ)）
+
+【現在のまとめの内容】
+${currentExplanation || "（まとめがありません）"}
+
+【生徒からの質問】
+${question}
+
+以下のJSON形式で回答してください。JSONのみを返し、他のテキストは含めないでください：
+{
+  "answer": "質問への丁寧で分かりやすい回答（250字以内）。英語・コード用語には必ずカタカナを括弧で補足してください",
+  "proposedInsight": "このQ&Aで生徒が得た気づきを、生徒自身の言葉のような一人称の気づきメモ調で1〜3文にまとめる（例：「〜だと思っていたが、実は〜だと分かった」「〜と〜は…という点でつながっていた」）。まとめに既に書いてあることの言い換えではなく、質問を通じて新しく腑に落ちた点を書くこと。気づきと呼べる内容がなければ空文字にする。英語用語はカタカナ補足。"
+}`
       : `あなたは入社したての社員に教える親切な先輩社員です。
 レッスン：${lessonTitle}
 
@@ -89,7 +111,7 @@ ${question}
     const textBlock = message.content.find((b) => b.type === "text");
     const rawText = textBlock && textBlock.type === "text" ? textBlock.text : "{}";
 
-    let parsed: { answer?: string; proposedAddition?: string; proposedDefinition?: string; newTerms?: { term: string; definition: string }[] };
+    let parsed: { answer?: string; proposedAddition?: string; proposedInsight?: string; proposedDefinition?: string; newTerms?: { term: string; definition: string }[] };
     try {
       const jsonMatch = rawText.match(/\{[\s\S]*\}/);
       parsed = jsonMatch ? JSON.parse(jsonMatch[0]) : { answer: rawText };
@@ -100,6 +122,7 @@ ${question}
     return Response.json({
       answer: parsed.answer || "回答を生成できませんでした",
       proposedAddition: parsed.proposedAddition || "",
+      proposedInsight: parsed.proposedInsight || "",
       proposedDefinition: parsed.proposedDefinition || "",
       newTerms: Array.isArray(parsed.newTerms) ? parsed.newTerms : [],
     });

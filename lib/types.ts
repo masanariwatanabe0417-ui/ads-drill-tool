@@ -11,6 +11,7 @@ export interface QAEntry {
   question: string;
   answer: string;
   proposedAddition: string;
+  proposedInsight?: string;           // まとめビュー時の「気づき」提案（一人称の気づきメモ調）
   proposedDefinition?: string;        // 単語帳モード時の提案定義
   newTermSuggestions?: NewTermSuggestion[]; // 回答中に出てきた新規登録候補用語
   approvedNewTerms?: string[];        // 登録済み新規用語のterm一覧
@@ -72,6 +73,16 @@ export interface SummaryHighlight {
   color: string;   // 当面 "yellow" 固定
 }
 
+// まとめ（レッスン/コース/講義まとめ）の「自分の気づき」。Q&Aの回答からAIが提案し、
+// ユーザーが承認したものだけ蓄積する。総括(overviewText)の再生成とは完全に独立。
+export interface SummaryInsight {
+  id: string;             // 一意ID（削除用）
+  scope: string;          // 対象まとめ。"l:<courseKey>__<lessonName>"（レッスン）/ "c:<courseKey>"（コース・講義）
+  text: string;           // 気づき本文（一人称の気づきメモ調・1〜3文）
+  sourceQuestion: string; // きっかけになった質問の要旨（見出し表示用）
+  timestamp: number;
+}
+
 export interface StudyLog {
   courses: CourseData[];
   glossaryOverrides?: Record<string, string>;    // term.toLowerCase() → カスタム定義文
@@ -79,6 +90,7 @@ export interface StudyLog {
   glossaryTermRenames?: Record<string, string>;  // 旧term.toLowerCase() → 修正後の表示用term（読み間違い等の手動修正）
   glossaryHighlights?: GlossaryHighlight[];       // 単語帳のマーカー（任意範囲ハイライト）
   summaryHighlights?: SummaryHighlight[];         // まとめのマーカー（任意範囲ハイライト）
+  summaryInsights?: SummaryInsight[];             // まとめの「自分の気づき」（Q&Aから承認制で追記）
 }
 
 export interface NewTermSuggestion {

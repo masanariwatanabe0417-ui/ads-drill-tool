@@ -3,7 +3,7 @@
 import { Loader2, GraduationCap, Clipboard, Sparkles, MessageCircle, ChevronRight, BookMarked, X, Search, Eye, EyeOff, Pencil, Network, FileDown, Headphones, Highlighter, BookPlus, Check } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { CourseData, ExtractedLessonInfo, GlossaryHighlight, LessonData, StudyLog, SummaryHighlight, TeacherView } from "@/lib/types";
+import { CourseData, ExtractedLessonInfo, GlossaryHighlight, LessonData, StudyLog, SummaryHighlight, SummaryInsight, TeacherView } from "@/lib/types";
 import { buildGlossary, findGlossaryEntry, GlossaryTerm, loadConsolidatedCache, normalizeForSearch, saveConsolidatedCache } from "@/lib/glossary";
 import { aiFetch } from "@/lib/passcode";
 import ReactMarkdown from "react-markdown";
@@ -42,6 +42,8 @@ interface TeacherPaneProps {
   overviewLoadingKey?: string | null;
   onRegenerateOverview?: (courseKey: string) => void;
   onAddManualGlossaryTerm?: (term: string, definition: string) => void;
+  summaryInsights?: SummaryInsight[];
+  onRemoveInsight?: (id: string) => void;
 }
 
 // ── まとめの図解化ボタン + 図表示 ──────────────────────────────────
@@ -892,6 +894,44 @@ function GlossaryView({
   );
 }
 
+// ── まとめの「自分の気づき」欄 ──────────────────────────────────────
+// Q&Aから承認制で溜まる気づき（studyLog.summaryInsights）。総括の再生成とは独立。
+// まとめ本文の後・図解の前に置く。PDF出力に含める（削除ボタンだけ print:hidden）。
+function InsightsSection({
+  insights,
+  onRemove,
+}: {
+  insights: SummaryInsight[];
+  onRemove: (id: string) => void;
+}) {
+  if (insights.length === 0) return null;
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+      <h3 className="text-sm font-semibold text-amber-800">💭 自分の気づき（Q&Aから）</h3>
+      <div className="space-y-2">
+        {insights.map((i) => (
+          <div key={i.id} className="group rounded-md bg-white/70 border border-amber-100 p-2">
+            <div className="flex items-start gap-2">
+              <p className="flex-1 text-xs text-foreground leading-relaxed whitespace-pre-wrap">{i.text}</p>
+              <button
+                onClick={() => onRemove(i.id)}
+                className="shrink-0 p-0.5 rounded text-muted-foreground/50 opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-opacity print:hidden"
+                title="この気づきを削除"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">
+              「{i.sourceQuestion}」の質問から・
+              {new Date(i.timestamp).toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" })}
+            </p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── レッスンまとめ（ハイライト対応） ───────────────────────────────
 function LessonSummary({
   lesson,
@@ -904,6 +944,8 @@ function LessonSummary({
   glossary,
   onAddTerm,
   onOpenGlossary,
+  insights,
+  onRemoveInsight,
 }: {
   lesson: LessonData;
   view: Extract<TeacherView, { type: "lesson" }>;
@@ -915,6 +957,8 @@ function LessonSummary({
   glossary: GlossaryTerm[];
   onAddTerm: (term: string, definition: string) => void;
   onOpenGlossary: (term: string) => void;
+  insights: SummaryInsight[];
+  onRemoveInsight: (id: string) => void;
 }) {
   const { startAdd, dialog } = useGlossaryTermAdder({
     getContext: () =>
@@ -956,6 +1000,8 @@ function LessonSummary({
           );
         })}
       </div>
+      {/* 気づき欄はまとめ本文の後・図解の前（Q&Aから承認制で蓄積） */}
+      <InsightsSection insights={insights} onRemove={onRemoveInsight} />
       {/* 図解はテキストの後ろに置く（図解を作ってもまとめ本文がそのまま読めるように） */}
       {lesson.diagramHtml ? (
         <HtmlDiagram html={lesson.diagramHtml} />
@@ -982,6 +1028,8 @@ function CourseSummary({
   glossary,
   onAddTerm,
   onOpenGlossary,
+  insights,
+  onRemoveInsight,
 }: {
   course: CourseData;
   view: Extract<TeacherView, { type: "course" }>;
@@ -995,6 +1043,8 @@ function CourseSummary({
   glossary: GlossaryTerm[];
   onAddTerm: (term: string, definition: string) => void;
   onOpenGlossary: (term: string) => void;
+  insights: SummaryInsight[];
+  onRemoveInsight: (id: string) => void;
 }) {
   const { startAdd, dialog } = useGlossaryTermAdder({
     getContext: () =>
@@ -1065,6 +1115,8 @@ function CourseSummary({
           </div>
         </div>
       ))}
+      {/* 気づき欄はまとめ本文の後・図解の前（Q&Aから承認制で蓄積） */}
+      <InsightsSection insights={insights} onRemove={onRemoveInsight} />
       {/* 図解はテキストの後ろに置く（図解を作ってもまとめ本文がそのまま読めるように） */}
       {course.diagramHtml ? (
         <HtmlDiagram html={course.diagramHtml} />
@@ -1316,7 +1368,9 @@ function renderContent(
   overviewLoadingKey: string | null,
   onRegenerateOverview: (courseKey: string) => void,
   onAddManualGlossaryTerm: (term: string, definition: string) => void,
-  glossary: GlossaryTerm[]
+  glossary: GlossaryTerm[],
+  summaryInsights: SummaryInsight[],
+  onRemoveInsight: (id: string) => void
 ): React.ReactNode {
   if (!teacherView) return null;
 
@@ -1374,6 +1428,10 @@ function renderContent(
         glossary={glossary}
         onAddTerm={onAddManualGlossaryTerm}
         onOpenGlossary={openGlossary}
+        insights={summaryInsights.filter(
+          (i) => i.scope === `l:${teacherView.courseKey}__${teacherView.lessonName}`
+        )}
+        onRemoveInsight={onRemoveInsight}
       />
     );
   }
@@ -1395,6 +1453,8 @@ function renderContent(
         glossary={glossary}
         onAddTerm={onAddManualGlossaryTerm}
         onOpenGlossary={openGlossary}
+        insights={summaryInsights.filter((i) => i.scope === `c:${teacherView.courseKey}`)}
+        onRemoveInsight={onRemoveInsight}
       />
     );
   }
@@ -1426,6 +1486,8 @@ export default function TeacherPane({
   overviewLoadingKey = null,
   onRegenerateOverview = () => {},
   onAddManualGlossaryTerm = () => {},
+  summaryInsights = [],
+  onRemoveInsight = () => {},
 }: TeacherPaneProps) {
   // 単語帳への重複登録チェック用（非表示にした用語は「未登録」扱いにして再追加を許す）
   const glossaryForDup = useMemo(() => {
@@ -1577,7 +1639,7 @@ export default function TeacherPane({
               <p className="text-xs text-muted-foreground max-w-xs break-all">{error}</p>
             </div>
           ) : teacherView ? (
-            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview, onAddManualGlossaryTerm, glossaryForDup)
+            renderContent(studyLog, teacherView, onSelectView, deletedGlossaryTerms, onDeleteGlossaryTerm, onRenameGlossaryTerm, glossaryFocusTerm, onFocusGlossaryTerm, glossaryHighlights, onAddGlossaryHighlight, onRemoveGlossaryHighlight, summaryHighlights, onAddSummaryHighlight, onRemoveSummaryHighlight, diagramLoadingKey, onGenerateDiagram, overviewLoadingKey, onRegenerateOverview, onAddManualGlossaryTerm, glossaryForDup, summaryInsights, onRemoveInsight)
           ) : (
             hasScreenshots ? (
               <div className="flex flex-col items-center justify-center gap-2 py-16 text-center text-muted-foreground">

@@ -14,6 +14,7 @@ import {
   ScreenshotSlot,
   StudyLog,
   SummaryHighlight,
+  SummaryInsight,
   TeacherView,
 } from "@/lib/types";
 import { aiFetch } from "@/lib/passcode";
@@ -123,6 +124,13 @@ function describeTeacherView(
     .join("\n\n")
     .slice(0, VIEW_CONTEXT_MAX);
   return { title: `${courseLabel}（コースまとめ）`, context };
+}
+
+// 「自分の気づき」の永続スコープ。まとめビューだけが対象（問題ビューはつまずき補強＝解説追記が担当）
+function insightScopeForView(view: TeacherView): string | null {
+  if (view?.type === "lesson") return `l:${view.courseKey}__${view.lessonName}`;
+  if (view?.type === "course") return `c:${view.courseKey}`;
+  return null;
 }
 
 export default function DrillTool() {
@@ -741,6 +749,7 @@ export default function DrillTool() {
       setQuestionLoading(true);
       try {
         const view = describeTeacherView(studyLog, teacherView);
+        const isSummaryView = insightScopeForView(teacherView) !== null;
         const res = await aiFetch("/api/question", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -749,6 +758,7 @@ export default function DrillTool() {
             questionImageDataUrl: screenshots.questionImage,
             answerImageDataUrl: screenshots.answerImage,
             currentExplanation: view.context,
+            summaryMode: isSummaryView,
             lessonTitle:
               teacherView !== null
                 ? view.title
@@ -769,6 +779,8 @@ export default function DrillTool() {
           // 追加案の永続先（解説本文）があるのは問題ビューだけ。他ビューでは非表示にする
           proposedAddition:
             teacherView?.type === "question" ? data.proposedAddition || "" : "",
+          // 気づき提案はまとめビュー（レッスン/コース/講義まとめ）だけ
+          proposedInsight: isSummaryView ? data.proposedInsight || "" : "",
           approved: false,
         };
         setQaEntries((prev) => [...prev, entry]);
@@ -817,6 +829,41 @@ export default function DrillTool() {
     },
     [qaEntries, teacherView]
   );
+
+  // まとめビューのQ&Aで出た「気づき」提案を承認し、studyLog.summaryInsights に蓄積する。
+  // 総括(overviewText)の再生成とは独立したデータなので、再生成しても消えない。
+  const handleApproveInsight = useCallback(
+    (entryId: string) => {
+      const entry = qaEntries.find((e) => e.id === entryId);
+      const scope = insightScopeForView(teacherView);
+      if (entry?.proposedInsight && scope) {
+        const q1line = entry.question.replace(/\s+/g, " ").trim();
+        const shortQ = q1line.length > 24 ? `${q1line.slice(0, 24)}…` : q1line;
+        const insight: SummaryInsight = {
+          id: crypto.randomUUID(),
+          scope,
+          text: entry.proposedInsight,
+          sourceQuestion: shortQ,
+          timestamp: Date.now(),
+        };
+        setStudyLog((prev) => ({
+          ...prev,
+          summaryInsights: [...(prev.summaryInsights ?? []), insight],
+        }));
+      }
+      setQaEntries((prev) =>
+        prev.map((e) => (e.id === entryId ? { ...e, approved: true } : e))
+      );
+    },
+    [qaEntries, teacherView]
+  );
+
+  const handleRemoveInsight = useCallback((id: string) => {
+    setStudyLog((prev) => ({
+      ...prev,
+      summaryInsights: (prev.summaryInsights ?? []).filter((i) => i.id !== id),
+    }));
+  }, []);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -874,6 +921,8 @@ export default function DrillTool() {
           summaryHighlights={studyLog.summaryHighlights ?? []}
           onAddSummaryHighlight={handleAddSummaryHighlight}
           onRemoveSummaryHighlight={handleRemoveSummaryHighlight}
+          summaryInsights={studyLog.summaryInsights ?? []}
+          onRemoveInsight={handleRemoveInsight}
           diagramLoadingKey={diagramLoadingKey}
           onGenerateDiagram={handleGenerateDiagram}
           overviewLoadingKey={overviewLoadingKey}
@@ -889,6 +938,7 @@ export default function DrillTool() {
           canAsk={teacherView !== null || !!screenshots.questionImage}
           onAskQuestion={handleAskQuestion}
           onApproveAddition={handleApproveAddition}
+          onApproveInsight={handleApproveInsight}
           glossaryFocusTerm={glossaryFocusTerm}
           glossaryQaEntries={glossaryQaEntries}
           glossaryQaLoading={glossaryQaLoading}
