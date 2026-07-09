@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import NavigationPane from "./panes/NavigationPane";
 import ScreenshotPane from "./panes/ScreenshotPane";
 import TeacherPane from "./panes/TeacherPane";
@@ -744,6 +744,21 @@ export default function DrillTool() {
     }
   }, []);
 
+  // ドリル一覧（シリーズ→コース→レッスン名）。まとめビューのQ&Aで「どこを勉強すれば？」系の
+  // 質問に、実在するコース名・レッスン名で答えられるようAIに渡すカタログ（講義コースは除外）
+  const drillCatalog = useMemo(() => {
+    const bySeries = new Map<string, string[]>();
+    for (const c of studyLog.courses) {
+      if (c.contentType === "lecture") continue;
+      const list = bySeries.get(c.seriesName) ?? [];
+      list.push(`- ${c.courseName}: ${c.lessons.map((l) => l.lessonName).join(" / ")}`);
+      bySeries.set(c.seriesName, list);
+    }
+    return Array.from(bySeries.entries())
+      .map(([series, courses]) => [`■ ${series}`, ...courses].join("\n"))
+      .join("\n");
+  }, [studyLog]);
+
   const handleAskQuestion = useCallback(
     async (question: string) => {
       setQuestionLoading(true);
@@ -759,6 +774,8 @@ export default function DrillTool() {
             answerImageDataUrl: screenshots.answerImage,
             currentExplanation: view.context,
             summaryMode: isSummaryView,
+            // カタログはまとめビュー限定（問題ビューのQ&Aまで毎回1万トークン積むのを避ける）
+            drillCatalog: isSummaryView ? drillCatalog : undefined,
             lessonTitle:
               teacherView !== null
                 ? view.title
@@ -790,7 +807,7 @@ export default function DrillTool() {
         setQuestionLoading(false);
       }
     },
-    [screenshots, teacherView, studyLog, currentLessonInfo]
+    [screenshots, teacherView, studyLog, currentLessonInfo, drillCatalog]
   );
 
   const handleApproveAddition = useCallback(
